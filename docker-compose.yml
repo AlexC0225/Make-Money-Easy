@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: make-money-easy-backend
+    environment:
+      MME_APP_NAME: Make Money Easy
+      MME_ENV: development
+      MME_DEBUG: "true"
+      MME_API_V1_PREFIX: /api/v1
+      MME_DATABASE_URL: sqlite:////app/data/app.db
+      MME_JOB_LOG_DIR: /app/data/logs
+      MME_DEFAULT_LOT_SIZE: "1000"
+      MME_DEFAULT_CASH_ALLOCATION_PCT: "10"
+      MME_MAX_OPEN_POSITIONS: "20"
+      MME_DEFAULT_FEE_RATE: "0.001425"
+      MME_DEFAULT_TAX_RATE: "0.003"
+      MME_SCHEDULER_TIMEZONE: Asia/Taipei
+      MME_SCHEDULER_ENABLED: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: make-money-easy-frontend
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - frontend_node_modules:/app/frontend/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  frontend_node_modules:

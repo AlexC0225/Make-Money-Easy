@@ -32,6 +32,7 @@ class WatchlistService:
                 code=row.stock.code,
                 name=row.stock.name,
                 market=row.stock.market,
+                industry=row.stock.industry,
                 note=row.note,
                 created_at=row.created_at,
             )
@@ -59,6 +60,7 @@ class WatchlistService:
             code=stock.code,
             name=stock.name,
             market=stock.market,
+            industry=stock.industry,
             note=item.note,
             created_at=item.created_at,
         )

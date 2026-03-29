@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session, get_etf_constituent_service, get_twstock_client
+from app.api.deps import get_db_session, get_twstock_client
 from app.schemas.strategy import (
     AutomationConfigRead,
     AutomationConfigUpdateRequest,
@@ -36,7 +36,9 @@ def run_strategy(
             strategy_name=payload.strategy_name,
             user_id=payload.user_id,
             execute_trade=payload.execute_trade,
+            position_sizing_mode=payload.position_sizing_mode,
             buy_quantity=payload.buy_quantity,
+            cash_allocation_pct=payload.cash_allocation_pct,
             twstock_client=client,
         )
         db.commit()
@@ -52,7 +54,7 @@ def get_automation_config(
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
 ) -> AutomationConfigRead:
-    service = AutomationService(db, client, get_etf_constituent_service())
+    service = AutomationService(db, client)
     try:
         config = service.get_or_create_config(user_id)
         db.commit()
@@ -69,7 +71,7 @@ def update_automation_config(
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
 ) -> AutomationConfigRead:
-    service = AutomationService(db, client, get_etf_constituent_service())
+    service = AutomationService(db, client)
     try:
         config = service.update_config(user_id, payload)
         db.commit()

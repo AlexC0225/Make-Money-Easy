@@ -45,7 +45,7 @@ export function LoginPage() {
           <article className="auth-highlight-card">
             <Sparkles size={18} />
             <strong>同步範圍透明</strong>
-            <p>預設同步會清楚顯示 watchlist 與 0050 成分股的組成，不再是黑盒子。</p>
+            <p>預設同步會清楚顯示 watchlist 與科技、金融產業股票池的組成，不再是黑盒子。</p>
           </article>
         </div>
       </section>

@@ -66,6 +66,23 @@ class DummyResponse:
         }
 
 
+class DummyTpexHistoryResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "tables": [
+                {
+                    "data": [
+                        ["115/03/02", "76,330", "1,154,792", "15.16", "15.16", "15.11", "15.14", "0.01", "7,873"],
+                        ["115/03/03", "58,086", "878,382", "15.11", "15.14", "15.11", "15.12", "-0.02", "6,651"],
+                    ]
+                }
+            ]
+        }
+
+
 def test_get_history_range_fetches_upstream_when_database_empty(client):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
 
@@ -106,3 +123,19 @@ def test_get_realtime_quote_falls_back_to_yahoo(monkeypatch):
     assert quote.high_price == 1845.0
     assert quote.low_price == 1815.0
     assert quote.accumulate_trade_volume == 32000000
+
+
+def test_get_history_range_uses_tpex_parser_for_bond_etf(monkeypatch):
+    client = TwStockClient()
+
+    monkeypatch.setattr("app.services.twstock_client.requests.get", lambda *args, **kwargs: DummyTpexHistoryResponse())
+    monkeypatch.setattr(client, "_acquire_twse_slot", lambda: None)
+
+    prices = client.get_history_range("00937B", date(2026, 3, 1), date(2026, 3, 31))
+
+    assert len(prices) == 2
+    assert prices[0].trade_date == date(2026, 3, 2)
+    assert prices[0].close_price == 15.14
+    assert prices[0].volume == 76_330_000
+    assert prices[0].turnover == 1_154_792_000.0
+    assert prices[0].transaction_count == 7_873

@@ -5,38 +5,46 @@ from app.db.models.stock import Stock
 from app.db.session import get_session_factory
 
 
-def _seed_backtest_stock() -> None:
+def _seed_backtest_stocks(codes: list[str]) -> None:
     session = get_session_factory()()
     try:
-        stock = Stock(code="2330", name="TSMC", market="TSEC", industry="Semiconductor", is_active=True)
-        session.add(stock)
-        session.flush()
-
         start_date = date(2025, 1, 1)
-        for offset in range(240):
-            trade_date = start_date + timedelta(days=offset)
-            close_price = 800.0 + (offset * 1.5)
-            session.add(
-                DailyPrice(
-                    stock_id=stock.id,
-                    trade_date=trade_date,
-                    open_price=close_price - 2,
-                    high_price=close_price + 6,
-                    low_price=close_price - 6,
-                    close_price=close_price,
-                    volume=100_000 + (offset * 100),
-                    turnover=close_price * (100_000 + (offset * 100)),
-                    transaction_count=1_000 + offset,
-                )
+
+        for stock_index, code in enumerate(codes):
+            stock = Stock(
+                code=code,
+                name=f"Stock {code}",
+                market="TSEC",
+                industry="Semiconductor",
+                is_active=True,
             )
+            session.add(stock)
+            session.flush()
+
+            for offset in range(240):
+                trade_date = start_date + timedelta(days=offset)
+                close_price = 800.0 + (offset * (1.2 + (stock_index * 0.1)))
+                session.add(
+                    DailyPrice(
+                        stock_id=stock.id,
+                        trade_date=trade_date,
+                        open_price=close_price - 2,
+                        high_price=close_price + 6,
+                        low_price=close_price - 6,
+                        close_price=close_price,
+                        volume=100_000 + (offset * 100),
+                        turnover=close_price * (100_000 + (offset * 100)),
+                        transaction_count=1_000 + offset,
+                    )
+                )
 
         session.commit()
     finally:
         session.close()
 
 
-def test_run_backtest_creates_result(client):
-    _seed_backtest_stock()
+def test_run_backtest_creates_single_stock_result(client):
+    _seed_backtest_stocks(["2330"])
 
     response = client.post(
         "/api/v1/backtests/run",
@@ -46,16 +54,52 @@ def test_run_backtest_creates_result(client):
             "start_date": "2025-01-01",
             "end_date": "2025-08-28",
             "initial_cash": 1_000_000,
+            "position_sizing_mode": "cash_percent",
             "lot_size": 1000,
+            "cash_allocation_pct": 25,
         },
     )
 
     assert response.status_code == 201
     payload = response.json()
     assert payload["stock_code"] == "2330"
+    assert payload["is_portfolio"] is False
+    assert payload["portfolio_codes"] == []
     assert payload["strategy_name"] == "connors_rsi2_long"
     assert payload["result"]["initial_cash"] == 1_000_000
+    assert payload["result"]["position_sizing_mode"] == "cash_percent"
+    assert payload["result"]["cash_allocation_pct"] == 25
+    assert payload["result"]["max_open_positions"] == 20
 
     list_response = client.get("/api/v1/backtests?limit=5")
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+
+def test_run_backtest_creates_portfolio_result(client):
+    _seed_backtest_stocks(["2330", "2317"])
+
+    response = client.post(
+        "/api/v1/backtests/run",
+        json={
+            "code": "2330, 2317",
+            "strategy_name": "connors_rsi2_long",
+            "start_date": "2025-01-01",
+            "end_date": "2025-08-28",
+            "initial_cash": 1_000_000,
+            "position_sizing_mode": "cash_percent",
+            "lot_size": 1000,
+            "cash_allocation_pct": 20,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["stock_code"] == "PORTFOLIO"
+    assert payload["is_portfolio"] is True
+    assert payload["portfolio_codes"] == ["2330", "2317"]
+    assert payload["result"]["portfolio_codes"] == ["2330", "2317"]
+    assert payload["result"]["is_portfolio"] is True
+    assert payload["result"]["max_open_positions"] == 20
+    assert "equity_curve" in payload["result"]
+    assert payload["result"]["open_positions"] == []

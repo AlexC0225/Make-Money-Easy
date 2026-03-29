@@ -115,6 +115,18 @@ export type HistoricalRange = {
   prices: HistoricalPrice[]
 }
 
+export type BacktestTrade = {
+  date: string
+  side: 'BUY' | 'SELL'
+  price: number
+  quantity: number
+  stock_code?: string
+  stock_name?: string
+  reason?: string
+  pnl?: number
+  return?: number
+}
+
 export type StrategyDefinition = {
   name: string
   title: string
@@ -150,21 +162,27 @@ export type StrategyRunPayload = {
   code: string
   strategy_name: string
   execute_trade?: boolean
+  position_sizing_mode?: 'fixed_shares' | 'cash_percent'
   buy_quantity?: number
+  cash_allocation_pct?: number
 }
 
 export type AutomationConfig = {
   user_id: number
   enabled: boolean
   strategy_name: string
+  position_sizing_mode: 'fixed_shares' | 'cash_percent'
   buy_quantity: number
+  cash_allocation_pct: number
   updated_at?: string | null
 }
 
 export type AutomationConfigUpdatePayload = {
   enabled: boolean
   strategy_name: string
+  position_sizing_mode: 'fixed_shares' | 'cash_percent'
   buy_quantity: number
+  cash_allocation_pct: number
 }
 
 export type BacktestResult = {
@@ -172,6 +190,8 @@ export type BacktestResult = {
   strategy_name: string
   stock_code: string
   stock_name: string
+  portfolio_codes: string[]
+  is_portfolio: boolean
   start_date: string
   end_date: string
   total_return: number
@@ -184,10 +204,34 @@ export type BacktestResult = {
     final_equity: number
     realized_pnl: number
     open_position_quantity: number
+    open_position_count?: number
     trade_count: number
     closed_trade_count: number
-    equity_curve: Array<{ date: string; equity: number; signal: string; close: number }>
-    trades: Array<Record<string, string | number>>
+    position_sizing_mode?: 'fixed_shares' | 'cash_percent'
+    lot_size?: number
+    cash_allocation_pct?: number
+    max_open_positions?: number
+    portfolio_codes?: string[]
+    is_portfolio?: boolean
+    equity_curve: Array<{
+      date: string
+      equity: number
+      signal?: string
+      close?: number
+      cash?: number
+      holdings_value?: number
+      open_positions?: number
+    }>
+    trades: BacktestTrade[]
+    open_positions?: Array<{
+      stock_code: string
+      stock_name: string
+      quantity: number
+      entry_price: number
+      market_price: number
+      market_value: number
+      entry_date?: string | null
+    }>
   }
   created_at: string
 }
@@ -198,14 +242,9 @@ export type BacktestRunPayload = {
   start_date: string
   end_date: string
   initial_cash: number
+  position_sizing_mode: 'fixed_shares' | 'cash_percent'
   lot_size: number
-}
-
-export type HistorySyncPayload = {
-  codes?: string[]
-  user_id?: number
-  year: number
-  month: number
+  cash_allocation_pct: number
 }
 
 export type HistoryRangeSyncPayload = {
@@ -219,22 +258,17 @@ export type SyncTargetPreview = {
   selection_mode: string
   codes: string[]
   watchlist_codes: string[]
-  benchmark_codes: string[]
-  source_url?: string | null
-  announce_date?: string | null
-  trade_date?: string | null
+  default_pool_codes: string[]
+  default_pool_industries: string[]
+  default_pool_items: Array<{
+    code: string
+    name: string
+    industry?: string | null
+  }>
 }
 
 export type StockUniverseSyncResult = {
   synced_count: number
-}
-
-export type HistorySyncResult = SyncTargetPreview & {
-  year: number
-  month: number
-  synced_codes: number
-  synced_rows: number
-  failed_codes: string[]
 }
 
 export type HistoryRangeSyncResult = SyncTargetPreview & {
@@ -267,6 +301,7 @@ export type WatchlistItem = {
   code: string
   name: string
   market: string
+  industry?: string | null
   note?: string | null
   created_at: string
 }

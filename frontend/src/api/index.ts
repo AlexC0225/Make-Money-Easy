@@ -7,8 +7,6 @@ import type {
   HistoricalRange,
   HistoryRangeSyncPayload,
   HistoryRangeSyncResult,
-  HistorySyncPayload,
-  HistorySyncResult,
   LoginPayload,
   LoginResponse,
   MarketOverview,
@@ -80,11 +78,6 @@ export const api = {
   getSyncTargets: (userId?: number) =>
     request<SyncTargetPreview>('/jobs/sync/targets', {
       params: { user_id: userId },
-    }),
-  syncHistory: (payload: HistorySyncPayload) =>
-    request<HistorySyncResult>('/jobs/sync/history', {
-      method: 'POST',
-      body: JSON.stringify(payload),
     }),
   syncHistoryRange: (payload: HistoryRangeSyncPayload) =>
     request<HistoryRangeSyncResult>('/jobs/sync/history-range', {

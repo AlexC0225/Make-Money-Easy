@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session, get_etf_constituent_service, get_twstock_client
+from app.api.deps import get_db_session, get_twstock_client
 from app.schemas.job import (
     HistoryRangeSyncRequest,
     HistoryRangeSyncResponse,
@@ -12,20 +12,29 @@ from app.schemas.job import (
     StockUniverseSyncResponse,
     SyncTargetPreviewResponse,
 )
-from app.services.etf_constituent_service import EtfConstituentService, EtfConstituentServiceError
 from app.services.market_data_service import MarketDataService, MarketDataServiceError
 from app.services.twstock_client import TwStockClient, TwStockClientError
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+def _serialize_default_pool_items(selection) -> list[dict[str, str | None]]:
+    return [
+        {
+            "code": item.code,
+            "name": item.name,
+            "industry": item.industry,
+        }
+        for item in selection.default_pool_items
+    ]
+
+
 @router.post("/sync/stocks", response_model=StockUniverseSyncResponse)
 def sync_stock_universe(
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
-    constituent_service: EtfConstituentService = Depends(get_etf_constituent_service),
 ) -> StockUniverseSyncResponse:
-    service = MarketDataService(db, client, constituent_service)
+    service = MarketDataService(db, client)
     synced_count = service.sync_stock_universe()
     db.commit()
     return StockUniverseSyncResponse(synced_count=synced_count)
@@ -36,22 +45,20 @@ def get_sync_targets(
     user_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
-    constituent_service: EtfConstituentService = Depends(get_etf_constituent_service),
 ) -> SyncTargetPreviewResponse:
-    service = MarketDataService(db, client, constituent_service)
+    service = MarketDataService(db, client)
     try:
         selection = service.resolve_sync_targets(codes=None, user_id=user_id)
-    except (MarketDataServiceError, EtfConstituentServiceError) as exc:
+    except MarketDataServiceError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return SyncTargetPreviewResponse(
         selection_mode=selection.selection_mode,
         codes=selection.codes,
         watchlist_codes=selection.watchlist_codes,
-        benchmark_codes=selection.benchmark_codes,
-        source_url=selection.source_url,
-        announce_date=selection.announce_date,
-        trade_date=selection.trade_date,
+        default_pool_codes=selection.default_pool_codes,
+        default_pool_industries=selection.default_pool_industries,
+        default_pool_items=_serialize_default_pool_items(selection),
     )
 
 
@@ -60,9 +67,8 @@ def sync_history_batch(
     payload: HistorySyncRequest,
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
-    constituent_service: EtfConstituentService = Depends(get_etf_constituent_service),
 ) -> HistorySyncResponse:
-    service = MarketDataService(db, client, constituent_service)
+    service = MarketDataService(db, client)
     try:
         selection, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
             codes=payload.codes,
@@ -71,7 +77,7 @@ def sync_history_batch(
             user_id=payload.user_id,
         )
         db.commit()
-    except (TwStockClientError, MarketDataServiceError, EtfConstituentServiceError) as exc:
+    except (TwStockClientError, MarketDataServiceError) as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -79,10 +85,9 @@ def sync_history_batch(
         selection_mode=selection.selection_mode,
         codes=selection.codes,
         watchlist_codes=selection.watchlist_codes,
-        benchmark_codes=selection.benchmark_codes,
-        source_url=selection.source_url,
-        announce_date=selection.announce_date,
-        trade_date=selection.trade_date,
+        default_pool_codes=selection.default_pool_codes,
+        default_pool_industries=selection.default_pool_industries,
+        default_pool_items=_serialize_default_pool_items(selection),
         year=payload.year,
         month=payload.month,
         synced_codes=synced_codes,
@@ -96,9 +101,8 @@ def sync_history_range_batch(
     payload: HistoryRangeSyncRequest,
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
-    constituent_service: EtfConstituentService = Depends(get_etf_constituent_service),
 ) -> HistoryRangeSyncResponse:
-    service = MarketDataService(db, client, constituent_service)
+    service = MarketDataService(db, client)
     try:
         start_date = date.fromisoformat(payload.start_date)
         end_date = date.fromisoformat(payload.end_date)
@@ -109,7 +113,7 @@ def sync_history_range_batch(
             user_id=payload.user_id,
         )
         db.commit()
-    except (TwStockClientError, ValueError, MarketDataServiceError, EtfConstituentServiceError) as exc:
+    except (TwStockClientError, ValueError, MarketDataServiceError) as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -117,10 +121,9 @@ def sync_history_range_batch(
         selection_mode=selection.selection_mode,
         codes=selection.codes,
         watchlist_codes=selection.watchlist_codes,
-        benchmark_codes=selection.benchmark_codes,
-        source_url=selection.source_url,
-        announce_date=selection.announce_date,
-        trade_date=selection.trade_date,
+        default_pool_codes=selection.default_pool_codes,
+        default_pool_industries=selection.default_pool_industries,
+        default_pool_items=_serialize_default_pool_items(selection),
         start_date=payload.start_date,
         end_date=payload.end_date,
         synced_codes=synced_codes,

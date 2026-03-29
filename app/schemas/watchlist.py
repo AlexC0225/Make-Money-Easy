@@ -15,5 +15,6 @@ class WatchlistItemRead(BaseModel):
     code: str
     name: str
     market: str
+    industry: str | None = None
     note: str | None = None
     created_at: datetime

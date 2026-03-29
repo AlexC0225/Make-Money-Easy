@@ -5,20 +5,22 @@ from app.schemas.stock import HistoricalPriceRead, RealtimeQuoteRead
 
 
 class FakeTwStockClient:
+    history_range_calls = 0
+
     def list_stock_universe(self):
         return [
             {
                 "code": "2330",
-                "name": "台積電",
+                "name": "TSMC",
                 "market": "TSEC",
-                "industry": "半導體",
+                "industry": "\u534a\u5c0e\u9ad4\u696d",
                 "is_active": True,
             },
             {
                 "code": "2317",
-                "name": "鴻海",
+                "name": "HonHai",
                 "market": "TSEC",
-                "industry": "電子代工",
+                "industry": "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d",
                 "is_active": True,
             },
         ]
@@ -27,17 +29,17 @@ class FakeTwStockClient:
         if code == "2317":
             return {
                 "code": code,
-                "name": "鴻海",
+                "name": "HonHai",
                 "market": "TSEC",
-                "industry": "電子代工",
+                "industry": "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d",
                 "is_active": True,
             }
 
         return {
             "code": code,
-            "name": "台積電",
+            "name": "TSMC",
             "market": "TSEC",
-            "industry": "半導體",
+            "industry": "\u534a\u5c0e\u9ad4\u696d",
             "is_active": True,
         }
 
@@ -56,6 +58,7 @@ class FakeTwStockClient:
         ]
 
     def get_history_range(self, code: str, start_date: date, end_date: date):
+        type(self).history_range_calls += 1
         current = start_date
         rows = []
         close_price = 100.0
@@ -79,7 +82,7 @@ class FakeTwStockClient:
     def get_realtime_quote(self, code: str):
         return RealtimeQuoteRead(
             code=code,
-            name="台積電",
+            name="TSMC" if code == "2330" else "HonHai",
             quote_time=datetime(2026, 3, 27, 9, 0, 0),
             latest_trade_price=108.0,
             reference_price=108.0,
@@ -114,7 +117,7 @@ def test_sync_stock_history_persists_records(client):
     stock_list_response = client.get("/api/v1/stocks")
     stocks = stock_list_response.json()
     assert len(stocks) == 1
-    assert stocks[0]["name"] == "台積電"
+    assert stocks[0]["name"] == "TSMC"
 
 
 def test_get_realtime_quote(client):
@@ -138,4 +141,24 @@ def test_get_history_range_from_database(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["code"] == "2330"
+    assert payload["prices"][0]["trade_date"] == "2026-03-01"
+    assert payload["prices"][-1]["trade_date"] == "2026-03-31"
+    assert len(payload["prices"]) == 31
+
+
+def test_get_history_range_uses_cached_prices_for_weekend_boundary(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+    FakeTwStockClient.history_range_calls = 0
+
+    prime_response = client.get("/api/v1/stocks/0050/history-range?start_date=2026-03-02&end_date=2026-03-27")
+    assert prime_response.status_code == 200
+    assert FakeTwStockClient.history_range_calls == 1
+
+    response = client.get("/api/v1/stocks/0050/history-range?start_date=2026-03-02&end_date=2026-03-28")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == "0050"
     assert payload["prices"][0]["trade_date"] == "2026-03-02"
+    assert payload["prices"][-1]["trade_date"] == "2026-03-27"
+    assert FakeTwStockClient.history_range_calls == 1

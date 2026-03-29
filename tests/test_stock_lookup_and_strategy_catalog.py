@@ -48,3 +48,4 @@ def test_strategy_catalog_lists_available_strategies(client):
     strategy_names = {item["name"] for item in catalog}
     assert "hybrid_tw_strategy" in strategy_names
     assert "connors_rsi2_long" in strategy_names
+    assert "tw_momentum_breakout_long" in strategy_names

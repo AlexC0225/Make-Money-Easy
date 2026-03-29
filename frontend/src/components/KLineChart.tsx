@@ -1,3 +1,17 @@
+import {
+  Area,
+  Bar,
+  Brush,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
 import type { HistoricalPrice } from '../types/api'
 import { formatNumber } from '../lib/format'
 
@@ -5,101 +19,181 @@ type KLineChartProps = {
   data: HistoricalPrice[]
 }
 
-const chartHeight = 320
-const chartWidth = 920
-const padding = { top: 20, right: 18, bottom: 36, left: 64 }
+type MarketChartRow = {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
 
-export function KLineChart({ data }: KLineChartProps) {
-  if (data.length === 0) {
-    return <div className="empty-card">這段期間還沒有歷史資料，請先到設定頁同步資料。</div>
+type MarketTooltipProps = {
+  active?: boolean
+  payload?: Array<{ payload: MarketChartRow }>
+}
+
+function formatPrice(value: number) {
+  return new Intl.NumberFormat('zh-TW', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
+function formatAxisDate(value: string) {
+  return value.replace(/-/g, '/').slice(2)
+}
+
+function MarketTooltip({ active, payload }: MarketTooltipProps) {
+  if (!active || !payload?.length) {
+    return null
   }
 
-  const highs = data.map((item) => item.high_price ?? 0)
-  const lows = data.map((item) => item.low_price ?? 0)
-  const minPrice = Math.min(...lows)
-  const maxPrice = Math.max(...highs)
-  const range = maxPrice - minPrice || 1
-  const innerWidth = chartWidth - padding.left - padding.right
-  const innerHeight = chartHeight - padding.top - padding.bottom
-  const candleGap = innerWidth / Math.max(data.length, 1)
-  const candleWidth = Math.max(4, Math.min(12, candleGap * 0.55))
+  const row = payload[0].payload
 
-  const toY = (value: number) => padding.top + ((maxPrice - value) / range) * innerHeight
-  const ticks = Array.from({ length: 5 }, (_, index) => maxPrice - (range / 4) * index)
-  const visibleDates = data.filter((_, index) => index % Math.max(1, Math.floor(data.length / 6)) === 0)
+  return (
+    <div className="chart-tooltip">
+      <strong>{row.date}</strong>
+      <p>收盤 {formatPrice(row.close)}</p>
+      <p>開盤 {formatPrice(row.open)}</p>
+      <p>最高 {formatPrice(row.high)}</p>
+      <p>最低 {formatPrice(row.low)}</p>
+      <p>成交量 {formatNumber(row.volume)}</p>
+    </div>
+  )
+}
+
+export function KLineChart({ data }: KLineChartProps) {
+  const rows = data
+    .map((item) => {
+      const open = item.open_price ?? item.close_price
+      const high = item.high_price ?? item.close_price
+      const low = item.low_price ?? item.close_price
+      const close = item.close_price ?? item.open_price
+
+      if (open === null || high === null || low === null || close === null) {
+        return null
+      }
+
+      return {
+        date: item.trade_date,
+        open,
+        high,
+        low,
+        close,
+        volume: item.volume ?? 0,
+      }
+    })
+    .filter((item): item is MarketChartRow => item !== null)
+    .sort((left, right) => left.date.localeCompare(right.date))
+
+  if (rows.length === 0) {
+    return <div className="empty-card">目前沒有可繪製的行情資料。</div>
+  }
+
+  const latest = rows[rows.length - 1]
+  const highest = Math.max(...rows.map((item) => item.high))
+  const lowest = Math.min(...rows.map((item) => item.low))
+  const priceMin = Math.floor(lowest * 0.98)
+  const priceMax = Math.ceil(highest * 1.02)
 
   return (
     <div className="kline-card">
-      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="kline-svg" role="img" aria-label="K line chart">
-        <rect x="0" y="0" width={chartWidth} height={chartHeight} rx="24" fill="transparent" />
+      <div className="chart-header">
+        <div>
+          <strong>互動行情圖</strong>
+          <p>可滑鼠查看明細，並用底部區間刷選快速縮放時間範圍。</p>
+        </div>
+      </div>
 
-        {ticks.map((tick) => {
-          const y = toY(tick)
-          return (
-            <g key={tick}>
-              <line
-                x1={padding.left}
-                y1={y}
-                x2={chartWidth - padding.right}
-                y2={y}
-                stroke="rgba(16, 46, 42, 0.08)"
-                strokeDasharray="4 4"
-              />
-              <text x={padding.left - 12} y={y + 4} textAnchor="end" className="kline-axis-text">
-                {formatNumber(Number(tick.toFixed(0)))}
-              </text>
-            </g>
-          )
-        })}
+      <div className="chart-summary-grid">
+        <article className="chart-summary-card">
+          <span>最新收盤</span>
+          <strong>{formatPrice(latest.close)}</strong>
+        </article>
+        <article className="chart-summary-card">
+          <span>區間最高</span>
+          <strong>{formatPrice(highest)}</strong>
+        </article>
+        <article className="chart-summary-card">
+          <span>區間最低</span>
+          <strong>{formatPrice(lowest)}</strong>
+        </article>
+        <article className="chart-summary-card">
+          <span>最新量能</span>
+          <strong>{formatNumber(latest.volume)}</strong>
+        </article>
+      </div>
 
-        {data.map((item, index) => {
-          const open = item.open_price ?? 0
-          const close = item.close_price ?? 0
-          const high = item.high_price ?? 0
-          const low = item.low_price ?? 0
-          const x = padding.left + index * candleGap + candleGap / 2
-          const openY = toY(open)
-          const closeY = toY(close)
-          const highY = toY(high)
-          const lowY = toY(low)
-          const isUp = close >= open
-          const bodyY = Math.min(openY, closeY)
-          const bodyHeight = Math.max(2, Math.abs(closeY - openY))
-          const fill = isUp ? '#0c7c59' : '#b5453a'
+      <div className="chart-surface">
+        <ResponsiveContainer width="100%" height={380}>
+          <ComposedChart data={rows} margin={{ top: 12, right: 16, bottom: 24, left: 0 }}>
+            <defs>
+              <linearGradient id="marketCloseFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#0c7c59" stopOpacity={0.22} />
+                <stop offset="100%" stopColor="#0c7c59" stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
 
-          return (
-            <g key={item.trade_date}>
-              <title>{`${item.trade_date} O:${open} H:${high} L:${low} C:${close}`}</title>
-              <line x1={x} y1={highY} x2={x} y2={lowY} stroke={fill} strokeWidth={1.5} />
-              <rect
-                x={x - candleWidth / 2}
-                y={bodyY}
-                width={candleWidth}
-                height={bodyHeight}
-                rx="2"
-                fill={fill}
-                opacity="0.9"
-              />
-            </g>
-          )
-        })}
-
-        {visibleDates.map((item, index) => {
-          const sourceIndex = data.findIndex((entry) => entry.trade_date === item.trade_date)
-          const x = padding.left + sourceIndex * candleGap + candleGap / 2
-          return (
-            <text
-              key={`${item.trade_date}-${index}`}
-              x={x}
-              y={chartHeight - 10}
-              textAnchor="middle"
-              className="kline-axis-text"
-            >
-              {item.trade_date.slice(5)}
-            </text>
-          )
-        })}
-      </svg>
+            <CartesianGrid stroke="rgba(16, 46, 42, 0.08)" strokeDasharray="4 4" vertical={false} />
+            <XAxis
+              dataKey="date"
+              minTickGap={36}
+              tickFormatter={formatAxisDate}
+              tick={{ fill: '#5b756f', fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              yAxisId="price"
+              domain={[priceMin, priceMax]}
+              tickFormatter={(value: number) => formatPrice(value)}
+              tick={{ fill: '#5b756f', fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+              width={72}
+            />
+            <YAxis yAxisId="volume" hide domain={[0, 'dataMax']} />
+            <Tooltip content={<MarketTooltip />} cursor={{ stroke: 'rgba(17, 49, 45, 0.18)', strokeWidth: 1 }} />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+            <Bar
+              yAxisId="volume"
+              dataKey="volume"
+              name="成交量"
+              barSize={10}
+              fill="rgba(17, 49, 45, 0.16)"
+              radius={[6, 6, 0, 0]}
+            />
+            <Area
+              yAxisId="price"
+              type="monotone"
+              dataKey="close"
+              name="收盤價"
+              legendType="none"
+              stroke="none"
+              fill="url(#marketCloseFill)"
+            />
+            <Line
+              yAxisId="price"
+              type="monotone"
+              dataKey="close"
+              name="收盤價"
+              stroke="#11312d"
+              strokeWidth={3}
+              dot={false}
+              activeDot={{ r: 5, fill: '#11312d', stroke: '#fffaf1', strokeWidth: 2 }}
+            />
+            <Brush
+              dataKey="date"
+              height={28}
+              stroke="#5f7b74"
+              travellerWidth={10}
+              fill="rgba(17, 49, 45, 0.05)"
+              tickFormatter={formatAxisDate}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }

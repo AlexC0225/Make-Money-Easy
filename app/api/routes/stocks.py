@@ -18,6 +18,18 @@ from app.services.twstock_client import TwStockClient, TwStockClientError
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
 
+def _history_range_needs_sync(prices: list, start_date: date, end_date: date) -> bool:
+    if not prices:
+        return True
+
+    # Daily prices only exist on trading days, so weekend or holiday boundaries
+    # should not force a full re-sync when cached rows already cover nearby sessions.
+    max_boundary_gap_days = 7
+    start_gap_days = (prices[0].trade_date - start_date).days
+    end_gap_days = (end_date - prices[-1].trade_date).days
+    return start_gap_days > max_boundary_gap_days or end_gap_days > max_boundary_gap_days
+
+
 @router.get("", response_model=list[StockRead])
 def list_stocks(
     limit: int = Query(default=20, ge=1, le=100),
@@ -85,7 +97,7 @@ def get_stock_history_range(
         stock = repository.upsert_stock(**metadata)
 
     prices = repository.get_daily_prices(stock.id, start_date=start_date, end_date=end_date)
-    if not prices:
+    if _history_range_needs_sync(prices, start_date=start_date, end_date=end_date):
         try:
             synced_prices = client.get_history_range(code=code, start_date=start_date, end_date=end_date)
         except TwStockClientError as exc:

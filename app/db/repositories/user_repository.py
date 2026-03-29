@@ -64,7 +64,9 @@ class UserRepository:
         self,
         user_id: int,
         strategy_name: str,
+        position_sizing_mode: str,
         buy_quantity: int,
+        cash_allocation_pct: float,
         enabled: bool = True,
     ) -> AutomationConfig:
         config = self.get_automation_config_by_user_id(user_id)
@@ -73,7 +75,9 @@ class UserRepository:
                 user_id=user_id,
                 enabled=enabled,
                 strategy_name=strategy_name,
+                position_sizing_mode=position_sizing_mode,
                 buy_quantity=buy_quantity,
+                cash_allocation_pct=cash_allocation_pct,
             )
             self.session.add(config)
             self.session.flush()
@@ -81,6 +85,8 @@ class UserRepository:
 
         config.enabled = enabled
         config.strategy_name = strategy_name
+        config.position_sizing_mode = position_sizing_mode
         config.buy_quantity = buy_quantity
+        config.cash_allocation_pct = cash_allocation_pct
         self.session.flush()
         return config

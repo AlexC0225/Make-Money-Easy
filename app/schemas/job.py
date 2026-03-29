@@ -1,6 +1,12 @@
 from pydantic import BaseModel, Field
 
 
+class SyncTargetStockRead(BaseModel):
+    code: str
+    name: str
+    industry: str | None = None
+
+
 class StockUniverseSyncResponse(BaseModel):
     synced_count: int
 
@@ -23,10 +29,9 @@ class SyncTargetPreviewResponse(BaseModel):
     selection_mode: str
     codes: list[str]
     watchlist_codes: list[str]
-    benchmark_codes: list[str]
-    source_url: str | None = None
-    announce_date: str | None = None
-    trade_date: str | None = None
+    default_pool_codes: list[str]
+    default_pool_industries: list[str]
+    default_pool_items: list[SyncTargetStockRead] = Field(default_factory=list)
 
 
 class HistorySyncResponse(SyncTargetPreviewResponse):

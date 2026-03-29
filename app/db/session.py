@@ -1,19 +1,37 @@
 from collections.abc import Generator
 from functools import lru_cache
+from pathlib import Path
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
 from app.db.base import Base
 
 
+def _prepare_sqlite_database_url(database_url: str) -> str:
+    url = make_url(database_url)
+    database = url.database
+
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return database_url
+
+    database_path = Path(database)
+    if not database_path.is_absolute():
+        database_path = Path.cwd() / database_path
+
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    return url.set(database=str(database_path)).render_as_string(hide_password=False)
+
+
 @lru_cache
 def get_engine():
     settings = get_settings()
     if settings.database_url.startswith("sqlite"):
+        database_url = _prepare_sqlite_database_url(settings.database_url)
         engine = create_engine(
-            settings.database_url,
+            database_url,
             connect_args={
                 "check_same_thread": False,
                 "timeout": 30,
@@ -56,4 +74,28 @@ def get_db() -> Generator[Session, None, None]:
 def create_db_and_tables() -> None:
     import app.db.models  # noqa: F401
 
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _apply_sqlite_schema_updates(engine)
+
+
+def _apply_sqlite_schema_updates(engine) -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        tables = {row[0] for row in connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "automation_configs" not in tables:
+            return
+
+        columns = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info('automation_configs')")
+        }
+        if "position_sizing_mode" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE automation_configs ADD COLUMN position_sizing_mode VARCHAR(32) NOT NULL DEFAULT 'fixed_shares'"
+            )
+        if "cash_allocation_pct" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE automation_configs ADD COLUMN cash_allocation_pct FLOAT NOT NULL DEFAULT 10.0"
+            )

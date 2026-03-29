@@ -1,22 +1,9 @@
-from app.api.deps import get_etf_constituent_service, get_twstock_client
-from app.services.etf_constituent_service import EtfConstituentSnapshot
+from app.api.deps import get_twstock_client
 from tests.test_stocks import FakeTwStockClient
-
-
-class FakeEtfConstituentService:
-    def get_0050_constituents(self) -> EtfConstituentSnapshot:
-        return EtfConstituentSnapshot(
-            etf_code="0050",
-            codes=["2330", "2317", "2454"],
-            source_url="https://www.yuantaetfs.com/tradeInfo/pcf/0050",
-            announce_date="2026-03-27",
-            trade_date="2026-03-26",
-        )
 
 
 def test_sync_stock_universe_job(client):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
-    client.app.dependency_overrides[get_etf_constituent_service] = FakeEtfConstituentService
 
     response = client.post("/api/v1/jobs/sync/stocks")
 
@@ -31,7 +18,6 @@ def test_sync_stock_universe_job(client):
 
 def test_sync_history_batch_job(client):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
-    client.app.dependency_overrides[get_etf_constituent_service] = FakeEtfConstituentService
 
     response = client.post(
         "/api/v1/jobs/sync/history",
@@ -45,9 +31,11 @@ def test_sync_history_batch_job(client):
     assert payload["failed_codes"] == []
 
 
-def test_sync_targets_default_to_watchlist_plus_0050(client):
+def test_sync_targets_default_to_watchlist_plus_default_pool(client):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
-    client.app.dependency_overrides[get_etf_constituent_service] = FakeEtfConstituentService
+
+    sync_stocks_response = client.post("/api/v1/jobs/sync/stocks")
+    assert sync_stocks_response.status_code == 200
 
     bootstrap_response = client.post(
         "/api/v1/portfolio/bootstrap",
@@ -74,10 +62,16 @@ def test_sync_targets_default_to_watchlist_plus_0050(client):
     preview_payload = preview_response.json()
     assert preview_payload["selection_mode"] == "default"
     assert preview_payload["watchlist_codes"] == ["2317"]
-    assert preview_payload["benchmark_codes"] == ["2330", "2317", "2454"]
-    assert preview_payload["codes"] == ["2317", "2330", "2454"]
-    assert preview_payload["announce_date"] == "2026-03-27"
-    assert preview_payload["trade_date"] == "2026-03-26"
+    assert preview_payload["default_pool_codes"] == ["2317", "2330"]
+    assert preview_payload["codes"] == ["2317", "2330"]
+    assert preview_payload["default_pool_industries"] == [
+        "\u534a\u5c0e\u9ad4\u696d",
+        "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d",
+    ]
+    assert preview_payload["default_pool_items"] == [
+        {"code": "2317", "name": "HonHai", "industry": "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d"},
+        {"code": "2330", "name": "TSMC", "industry": "\u534a\u5c0e\u9ad4\u696d"},
+    ]
 
     sync_response = client.post(
         "/api/v1/jobs/sync/history",
@@ -87,6 +81,80 @@ def test_sync_targets_default_to_watchlist_plus_0050(client):
     assert sync_response.status_code == 200
     sync_payload = sync_response.json()
     assert sync_payload["selection_mode"] == "default"
-    assert sync_payload["codes"] == ["2317", "2330", "2454"]
-    assert sync_payload["synced_codes"] == 3
+    assert sync_payload["codes"] == ["2317", "2330"]
+    assert sync_payload["default_pool_items"] == [
+        {"code": "2317", "name": "HonHai", "industry": "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d"},
+        {"code": "2330", "name": "TSMC", "industry": "\u534a\u5c0e\u9ad4\u696d"},
+    ]
+    assert sync_payload["synced_codes"] == 2
     assert sync_payload["failed_codes"] == []
+
+
+def test_sync_history_range_uses_default_targets_when_codes_omitted(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    sync_stocks_response = client.post("/api/v1/jobs/sync/stocks")
+    assert sync_stocks_response.status_code == 200
+
+    bootstrap_response = client.post(
+        "/api/v1/portfolio/bootstrap",
+        json={
+            "username": "range-sync-user",
+            "email": "range-sync@example.com",
+            "initial_cash": 1_000_000,
+            "available_cash": 1_000_000,
+            "positions": [],
+        },
+    )
+    assert bootstrap_response.status_code == 200
+    user_id = bootstrap_response.json()["user_id"]
+
+    watchlist_response = client.post(
+        "/api/v1/watchlist",
+        json={"user_id": user_id, "code": "2317", "note": "focus"},
+    )
+    assert watchlist_response.status_code == 201
+
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "user_id": user_id,
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selection_mode"] == "default"
+    assert payload["codes"] == ["2317", "2330"]
+    assert payload["default_pool_items"] == [
+        {"code": "2317", "name": "HonHai", "industry": "\u96fb\u8166\u53ca\u9031\u908a\u8a2d\u5099\u696d"},
+        {"code": "2330", "name": "TSMC", "industry": "\u534a\u5c0e\u9ad4\u696d"},
+    ]
+    assert payload["synced_codes"] == 2
+    assert payload["failed_codes"] == []
+
+
+def test_sync_history_range_only_uses_manual_codes_when_provided(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330", "2454"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selection_mode"] == "custom"
+    assert payload["codes"] == ["2330", "2454"]
+    assert payload["watchlist_codes"] == []
+    assert payload["default_pool_codes"] == []
+    assert payload["default_pool_industries"] == []
+    assert payload["default_pool_items"] == []
+    assert payload["synced_codes"] == 2
+    assert payload["failed_codes"] == []

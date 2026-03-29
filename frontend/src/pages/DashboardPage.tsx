@@ -8,6 +8,7 @@ import { KLineChart } from '../components/KLineChart'
 import { Panel } from '../components/Panel'
 import { PositionTable } from '../components/PositionTable'
 import { StatCard } from '../components/StatCard'
+import { StockAutocompleteInput } from '../components/StockAutocompleteInput'
 import { formatCurrency } from '../lib/format'
 import { getActiveUserId } from '../lib/storage'
 
@@ -32,16 +33,38 @@ function toDateInputValue(input: Date) {
 export function DashboardPage() {
   const queryClient = useQueryClient()
   const activeUserId = getActiveUserId()
-  const [symbol, setSymbol] = useState('2330')
+  const [symbolInput, setSymbolInput] = useState('2330')
+  const [resolvedStockCode, setResolvedStockCode] = useState<string | null>(null)
   const [chartStart, setChartStart] = useState(() => {
-    const start = new Date()
-    start.setMonth(start.getMonth() - 3)
+    const today = new Date()
+    const start = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())
     return toDateInputValue(start)
   })
   const [chartEnd, setChartEnd] = useState(() => toDateInputValue(new Date()))
   const [autoRefreshQuote, setAutoRefreshQuote] = useState(true)
-  const deferredSymbol = useDeferredValue(symbol.trim())
+  const deferredSymbol = useDeferredValue((resolvedStockCode ?? symbolInput).trim().toUpperCase())
   const isSymbolReady = deferredSymbol.length >= 4
+
+  const updateSymbolInput = (value: string) => {
+    const normalizedValue = value.trim().toUpperCase()
+    setSymbolInput(value)
+
+    if (!resolvedStockCode || normalizedValue === resolvedStockCode) {
+      return
+    }
+
+    setResolvedStockCode(null)
+  }
+
+  const resolveSymbol = (code: string) => {
+    const normalizedCode = code.trim().toUpperCase()
+    if (!normalizedCode) {
+      return
+    }
+
+    setResolvedStockCode(normalizedCode)
+    setSymbolInput(normalizedCode)
+  }
 
   const userQuery = useQuery({
     queryKey: ['user', activeUserId],
@@ -79,7 +102,13 @@ export function DashboardPage() {
   })
 
   const updateAutomationConfigMutation = useMutation({
-    mutationFn: (payload: { strategy_name: string; buy_quantity: number; enabled: boolean }) =>
+    mutationFn: (payload: {
+      strategy_name: string
+      position_sizing_mode: 'fixed_shares' | 'cash_percent'
+      buy_quantity: number
+      cash_allocation_pct: number
+      enabled: boolean
+    }) =>
       api.updateAutomationConfig(activeUserId!, payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['automation-config', activeUserId] })
@@ -116,8 +145,27 @@ export function DashboardPage() {
   }
 
   const selectedStrategy = automationConfigQuery.data?.strategy_name ?? 'connors_rsi2_long'
+  const positionSizingMode = automationConfigQuery.data?.position_sizing_mode ?? 'fixed_shares'
   const buyQuantity = automationConfigQuery.data?.buy_quantity ?? 1000
+  const cashAllocationPct = automationConfigQuery.data?.cash_allocation_pct ?? 10
+  const maxOpenPositions = 20
   const selectedStrategyMeta = strategyCatalogQuery.data?.find((item) => item.name === selectedStrategy)
+  const createAutomationPayload = (
+    overrides: Partial<{
+      enabled: boolean
+      strategy_name: string
+      position_sizing_mode: 'fixed_shares' | 'cash_percent'
+      buy_quantity: number
+      cash_allocation_pct: number
+    }> = {},
+  ) => ({
+    enabled: automationConfigQuery.data?.enabled ?? true,
+    strategy_name: selectedStrategy,
+    position_sizing_mode: positionSizingMode,
+    buy_quantity: buyQuantity,
+    cash_allocation_pct: cashAllocationPct,
+    ...overrides,
+  })
 
   return (
     <div className="page-grid">
@@ -146,7 +194,12 @@ export function DashboardPage() {
             <div className="form-grid form-grid--three">
               <label>
                 股票代碼
-                <input value={symbol} onChange={(event) => setSymbol(event.target.value)} />
+                <StockAutocompleteInput
+                  value={symbolInput}
+                  onChange={updateSymbolInput}
+                  onResolved={(stock) => resolveSymbol(stock.code)}
+                  placeholder="例如 2330 或 台積電"
+                />
               </label>
               <label>
                 開始日期
@@ -182,7 +235,7 @@ export function DashboardPage() {
             {watchlistQuery.data && watchlistQuery.data.length > 0 ? (
               <div className="chip-row">
                 {watchlistQuery.data.slice(0, 8).map((item) => (
-                  <button key={item.id} className="chip-button" type="button" onClick={() => setSymbol(item.code)}>
+                  <button key={item.id} className="chip-button" type="button" onClick={() => resolveSymbol(item.code)}>
                     {item.code}
                   </button>
                 ))}
@@ -209,7 +262,9 @@ export function DashboardPage() {
               </div>
             ) : null}
 
+            {historyQuery.isPending ? <p className="muted-text">正在載入歷史圖表資料...</p> : null}
             {historyQuery.data ? <KLineChart data={historyQuery.data.prices} /> : null}
+            {historyQuery.isSuccess && !historyQuery.data ? <div className="empty-card">目前沒有可顯示的圖表資料。</div> : null}
             {quoteQuery.error ? <p className="error-text">{quoteQuery.error.message}</p> : null}
             {historyQuery.error ? <p className="error-text">{historyQuery.error.message}</p> : null}
           </div>
@@ -222,11 +277,7 @@ export function DashboardPage() {
               <select
                 value={selectedStrategy}
                 onChange={(event) => {
-                  updateAutomationConfigMutation.mutate({
-                    enabled: automationConfigQuery.data?.enabled ?? true,
-                    strategy_name: event.target.value,
-                    buy_quantity: buyQuantity,
-                  })
+                  updateAutomationConfigMutation.mutate(createAutomationPayload({ strategy_name: event.target.value }))
                 }}
                 disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
               >
@@ -245,7 +296,7 @@ export function DashboardPage() {
               </div>
               <div className="info-card">
                 <strong>下單標的</strong>
-                <p>排程會對工作區預設同步池執行策略，也就是自選關注清單加上 0050 成分股。</p>
+                <p>排程會對工作區預設同步池執行策略，也就是自選關注清單加上科技、金融產業股票池。</p>
               </div>
               <div className="info-card">
                 <strong>執行方式</strong>
@@ -255,44 +306,84 @@ export function DashboardPage() {
                 <strong>使用提醒</strong>
                 <p>你在這裡只需要選策略，系統會於每日 14:10 更新資料，並在隔天 09:00 自動決策與套用下單。</p>
               </div>
+              <div className="info-card">
+                <strong>風控設定</strong>
+                <p>自動交易目前最多同時持有 {maxOpenPositions} 檔股票，超過上限的新買進訊號會跳過。</p>
+              </div>
             </div>
 
             <label>
-              每次買進股數
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={buyQuantity}
-                onWheel={(event) => event.currentTarget.blur()}
-                onChange={(event) => {
-                  updateAutomationConfigMutation.mutate({
-                    enabled: automationConfigQuery.data?.enabled ?? true,
-                    strategy_name: selectedStrategy,
-                    buy_quantity: Number(event.target.value),
-                  })
-                }}
+              下單方式
+              <select
+                value={positionSizingMode}
+                onChange={(event) =>
+                  updateAutomationConfigMutation.mutate(
+                    createAutomationPayload({
+                      position_sizing_mode: event.target.value as 'fixed_shares' | 'cash_percent',
+                    }),
+                  )
+                }
                 disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
-              />
+              >
+                <option value="fixed_shares">固定股數</option>
+                <option value="cash_percent">可用現金百分比</option>
+              </select>
             </label>
+
+            {positionSizingMode === 'fixed_shares' ? (
+              <label>
+                每次買進股數
+                <input
+                  type="number"
+                  min={1000}
+                  step={1000}
+                  value={buyQuantity}
+                  onWheel={(event) => event.currentTarget.blur()}
+                  onChange={(event) =>
+                    updateAutomationConfigMutation.mutate(
+                      createAutomationPayload({ buy_quantity: Number(event.target.value) }),
+                    )
+                  }
+                  disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
+                />
+              </label>
+            ) : (
+              <label>
+                每次投入可用現金比例
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step="0.5"
+                  value={cashAllocationPct}
+                  onWheel={(event) => event.currentTarget.blur()}
+                  onChange={(event) =>
+                    updateAutomationConfigMutation.mutate(
+                      createAutomationPayload({ cash_allocation_pct: Number(event.target.value) }),
+                    )
+                  }
+                  disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
+                />
+              </label>
+            )}
 
             {automationConfigQuery.data ? (
               <div className="info-card">
                 <strong>{automationConfigQuery.data.enabled ? '自動化已啟用' : '自動化已停用'}</strong>
-                <p>目前設定：{automationConfigQuery.data.strategy_name}，每次買進 {automationConfigQuery.data.buy_quantity} 股。</p>
+                <p>
+                  目前設定：{automationConfigQuery.data.strategy_name}，
+                  {automationConfigQuery.data.position_sizing_mode === 'cash_percent'
+                    ? `每次投入可用現金 ${automationConfigQuery.data.cash_allocation_pct}%`
+                    : `每次買進 ${automationConfigQuery.data.buy_quantity} 股`}
+                  ，最多持倉 {maxOpenPositions} 檔。
+                </p>
               </div>
             ) : null}
             <div className="inline-actions">
               <button
                 className={automationConfigQuery.data?.enabled ? 'ghost-button' : 'primary-button'}
                 type="button"
-                onClick={() =>
-                  updateAutomationConfigMutation.mutate({
-                    enabled: !(automationConfigQuery.data?.enabled ?? true),
-                    strategy_name: selectedStrategy,
-                    buy_quantity: buyQuantity,
-                  })
-                }
+                onClick={() => updateAutomationConfigMutation.mutate(createAutomationPayload({ enabled: !(automationConfigQuery.data?.enabled ?? true) }))}
                 disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
               >
                 {automationConfigQuery.data?.enabled ? '暫停自動化' : '啟用自動化'}

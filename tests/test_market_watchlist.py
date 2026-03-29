@@ -11,12 +11,12 @@ def _seed_market_snapshot() -> None:
     session = get_session_factory()()
     try:
         data = [
-            ("2330", "台積電", 100.0, 110.0, 500_000),
-            ("2317", "鴻海", 100.0, 95.0, 800_000),
-            ("0050", "元大台灣50", 100.0, 103.0, 1_200_000),
+            ("2330", "TSMC", 100.0, 110.0, 500_000),
+            ("2317", "HonHai", 100.0, 95.0, 800_000),
+            ("0050", "TW50 ETF", 100.0, 103.0, 1_200_000),
         ]
         for code, name, previous_close, latest_close, volume in data:
-            stock = Stock(code=code, name=name, market="TSEC", industry="測試", is_active=True)
+            stock = Stock(code=code, name=name, market="TSEC", industry="Test", is_active=True)
             session.add(stock)
             session.flush()
             session.add(
@@ -81,17 +81,19 @@ def test_watchlist_crud(client):
 
     create_response = client.post(
         "/api/v1/watchlist",
-        json={"user_id": user_id, "code": "2330", "note": "長期觀察"},
+        json={"user_id": user_id, "code": "2330", "note": "core"},
     )
     assert create_response.status_code == 201
     payload = create_response.json()
     assert payload["code"] == "2330"
+    assert payload["industry"] == "\u534a\u5c0e\u9ad4\u696d"
 
     list_response = client.get(f"/api/v1/watchlist?user_id={user_id}")
     assert list_response.status_code == 200
     items = list_response.json()
     assert len(items) == 1
-    assert items[0]["note"] == "長期觀察"
+    assert items[0]["note"] == "core"
+    assert items[0]["industry"] == "\u534a\u5c0e\u9ad4\u696d"
 
     delete_response = client.delete(f"/api/v1/watchlist/2330?user_id={user_id}")
     assert delete_response.status_code == 204

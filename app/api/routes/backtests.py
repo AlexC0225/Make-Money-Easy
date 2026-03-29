@@ -8,6 +8,18 @@ from app.services.backtest_service import BacktestService, BacktestServiceError,
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 
+def _normalize_codes(raw_value: str) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_value.replace("\n", ",").split(","):
+        code = item.strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        normalized.append(code)
+    return normalized
+
+
 @router.post("/run", response_model=BacktestResultRead, status_code=status.HTTP_201_CREATED)
 def run_backtest(
     payload: BacktestRunRequest,
@@ -17,12 +29,14 @@ def run_backtest(
     try:
         result = service.run_backtest(
             BacktestSpec(
-                code=payload.code.strip(),
+                codes=_normalize_codes(payload.code),
                 strategy_name=payload.strategy_name,
                 start_date=payload.start_date,
                 end_date=payload.end_date,
                 initial_cash=payload.initial_cash,
+                position_sizing_mode=payload.position_sizing_mode,
                 lot_size=payload.lot_size,
+                cash_allocation_pct=payload.cash_allocation_pct,
             )
         )
         db.commit()

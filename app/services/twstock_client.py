@@ -26,6 +26,7 @@ class TwStockClient:
         "TIB": "TWO",
     }
     YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+    TPEX_HISTORY_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
     YAHOO_HEADERS = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json",
@@ -81,26 +82,78 @@ class TwStockClient:
 
     def get_history(self, code: str, year: int, month: int) -> list[HistoricalPriceRead]:
         try:
-            stock = twstock.Stock(code)
-            self._acquire_twse_slot()
-            records = stock.fetch(year, month)
+            return self._fetch_month_history(code=code, year=year, month=month)
         except Exception as exc:  # pragma: no cover
             raise TwStockClientError(f"Failed to fetch history for {code}: {exc}") from exc
 
-        return self._to_history(records)
-
     def get_history_range(self, code: str, start_date: date, end_date: date) -> list[HistoricalPriceRead]:
         try:
-            stock = twstock.Stock(code)
-            records = []
+            history: list[HistoricalPriceRead] = []
             for year, month in self._iter_months(start_date, end_date):
-                self._acquire_twse_slot()
-                records.extend(stock.fetch(year, month))
+                history.extend(self._fetch_month_history(code=code, year=year, month=month))
         except Exception as exc:  # pragma: no cover
             raise TwStockClientError(f"Failed to fetch history range for {code}: {exc}") from exc
 
-        history = self._to_history(records)
         return [item for item in history if start_date <= item.trade_date <= end_date]
+
+    def _fetch_month_history(self, code: str, year: int, month: int) -> list[HistoricalPriceRead]:
+        if self._uses_tpex_history_source(code):
+            return self._fetch_tpex_history(code=code, year=year, month=month)
+
+        stock = twstock.Stock(code, initial_fetch=False)
+        self._acquire_twse_slot()
+        records = stock.fetch(year, month)
+        return self._to_history(records)
+
+    def _uses_tpex_history_source(self, code: str) -> bool:
+        stock_info = getattr(twstock, "codes", {}).get(code)
+        return getattr(stock_info, "data_source", None) == "tpex"
+
+    def _fetch_tpex_history(self, code: str, year: int, month: int) -> list[HistoricalPriceRead]:
+        self._acquire_twse_slot()
+        response = requests.get(
+            self.TPEX_HISTORY_URL,
+            params={
+                "date": f"{year}/{month:02d}/01",
+                "code": code,
+                "response": "json",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return self._parse_tpex_history_payload(payload)
+
+    def _parse_tpex_history_payload(self, payload: dict) -> list[HistoricalPriceRead]:
+        tables = payload.get("tables") or []
+        if not tables:
+            return []
+
+        rows = (tables[0] or {}).get("data") or []
+        history: list[HistoricalPriceRead] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 9:
+                continue
+
+            trade_date = self._parse_roc_date(str(row[0]).replace("*", ""))
+            history.append(
+                HistoricalPriceRead(
+                    trade_date=trade_date,
+                    volume=self._to_int(row[1], multiplier=1000),
+                    turnover=self._to_float(row[2], multiplier=1000),
+                    open_price=self._to_float(row[3]),
+                    high_price=self._to_float(row[4]),
+                    low_price=self._to_float(row[5]),
+                    close_price=self._to_float(row[6]),
+                    transaction_count=self._to_int(row[8]),
+                )
+            )
+        return history
+
+    @staticmethod
+    def _parse_roc_date(value: str) -> date:
+        year_text, month_text, day_text = value.split("/")
+        return date(int(year_text) + 1911, int(month_text), int(day_text))
 
     def get_realtime_quote(self, code: str) -> RealtimeQuoteRead:
         cached_quote = self._get_cached_quote(code)
@@ -187,16 +240,24 @@ class TwStockClient:
         return history
 
     @staticmethod
-    def _to_float(value: object) -> float | None:
+    def _to_float(value: object, multiplier: float = 1.0) -> float | None:
         if value in (None, "", "-"):
             return None
-        return float(value)
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+            if value in ("", "-", "--"):
+                return None
+        return float(value) * multiplier
 
     @staticmethod
-    def _to_int(value: object) -> int | None:
+    def _to_int(value: object, multiplier: float = 1.0) -> int | None:
         if value in (None, "", "-"):
             return None
-        return int(float(value))
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+            if value in ("", "-", "--"):
+                return None
+        return int(float(value) * multiplier)
 
     def _to_float_list(self, values: object) -> list[float]:
         if not values:

@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models.market_data import DailyPrice, RealtimeQuote
@@ -21,6 +21,39 @@ class StockRepository:
         if limit is not None:
             statement = statement.limit(limit)
         return list(self.session.scalars(statement))
+
+    def list_active_stocks_by_industries(self, industries: list[str] | tuple[str, ...]) -> list[Stock]:
+        normalized_industries = [industry.strip() for industry in industries if industry.strip()]
+        if not normalized_industries:
+            return []
+
+        statement = (
+            select(Stock)
+            .where(
+                Stock.is_active.is_(True),
+                Stock.industry.is_not(None),
+                func.trim(Stock.industry).in_(normalized_industries),
+            )
+            .order_by(Stock.code)
+        )
+        return list(self.session.scalars(statement))
+
+    def list_active_industries(self, industries: list[str] | tuple[str, ...]) -> list[str]:
+        normalized_industries = [industry.strip() for industry in industries if industry.strip()]
+        if not normalized_industries:
+            return []
+
+        statement = (
+            select(func.trim(Stock.industry))
+            .where(
+                Stock.is_active.is_(True),
+                Stock.industry.is_not(None),
+                func.trim(Stock.industry).in_(normalized_industries),
+            )
+            .distinct()
+            .order_by(func.trim(Stock.industry))
+        )
+        return [industry for industry in self.session.scalars(statement) if isinstance(industry, str)]
 
     def search_stocks(self, query: str, limit: int = 10) -> list[Stock]:
         normalized = query.strip()

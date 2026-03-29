@@ -10,7 +10,10 @@ class Settings(BaseSettings):
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
     database_url: str = "sqlite:///./data/app.db"
+    job_log_dir: str = "./data/logs"
     default_lot_size: int = 1000
+    default_cash_allocation_pct: float = Field(default=10.0, gt=0, le=100)
+    max_open_positions: int = Field(default=20, gt=0)
     default_fee_rate: float = Field(default=0.001425, ge=0)
     default_tax_rate: float = Field(default=0.003, ge=0)
     scheduler_timezone: str = "Asia/Taipei"

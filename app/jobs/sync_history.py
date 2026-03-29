@@ -2,7 +2,6 @@ from datetime import datetime
 
 from app.db.session import get_session_factory
 from app.db.repositories.stock_repository import StockRepository
-from app.services.etf_constituent_service import EtfConstituentService
 from app.services.market_data_service import MarketDataService
 from app.services.twstock_client import TwStockClient
 
@@ -10,7 +9,7 @@ from app.services.twstock_client import TwStockClient
 def run_sync_history_job(codes: list[str], year: int, month: int) -> dict[str, object]:
     session = get_session_factory()()
     try:
-        service = MarketDataService(session, TwStockClient(), EtfConstituentService())
+        service = MarketDataService(session, TwStockClient())
         _, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
             codes=codes,
             year=year,
@@ -32,7 +31,7 @@ def run_sync_current_month_history_job(limit: int | None = None) -> dict[str, ob
     try:
         repository = StockRepository(session)
         codes = [stock.code for stock in repository.list_active_stocks(limit=limit)]
-        service = MarketDataService(session, TwStockClient(), EtfConstituentService())
+        service = MarketDataService(session, TwStockClient())
         _, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
             codes=codes,
             year=now.year,

@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import get_settings
 from app.core.enums import OrderSide
 from app.db.models.order import Trade
 from app.db.models.portfolio import Position
@@ -10,10 +11,16 @@ from app.db.models.strategy import StrategyRun
 from app.db.repositories.stock_repository import StockRepository
 from app.schemas.strategy import StrategyDefinitionRead, StrategyExecutionRead, StrategySignalRead
 from app.services.order_service import OrderService, TradingServiceError
+from app.services.position_sizing_service import (
+    POSITION_SIZING_FIXED_SHARES,
+    PositionSizingServiceError,
+    resolve_buy_quantity,
+)
 from app.services.twstock_client import TwStockClient, TwStockClientError
 from app.strategies.base import StrategySignal
 from app.strategies.hybrid_tw_strategy import HybridTwStrategy
 from app.strategies.larry_connors_rsi2_strategy import LarryConnorsRsi2LongStrategy
+from app.strategies.tw_momentum_breakout_strategy import TaiwanMomentumBreakoutLongStrategy
 
 
 class StrategyServiceError(Exception):
@@ -23,10 +30,12 @@ class StrategyServiceError(Exception):
 class StrategyService:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self.settings = get_settings()
         self.stock_repository = StockRepository(session)
         self.strategies = {
             HybridTwStrategy.name: HybridTwStrategy(),
             LarryConnorsRsi2LongStrategy.name: LarryConnorsRsi2LongStrategy(),
+            TaiwanMomentumBreakoutLongStrategy.name: TaiwanMomentumBreakoutLongStrategy(),
         }
 
     def list_strategy_definitions(self) -> list[StrategyDefinitionRead]:
@@ -54,7 +63,9 @@ class StrategyService:
         strategy_name: str,
         user_id: int | None = None,
         execute_trade: bool = False,
+        position_sizing_mode: str = POSITION_SIZING_FIXED_SHARES,
         buy_quantity: int = 1000,
+        cash_allocation_pct: float = 10.0,
         twstock_client: TwStockClient | None = None,
     ) -> StrategySignalRead:
         strategy = self.get_strategy(strategy_name)
@@ -101,7 +112,9 @@ class StrategyService:
                 user_id=user_id,
                 code=stock.code,
                 signal=signal,
+                position_sizing_mode=position_sizing_mode,
                 buy_quantity=buy_quantity,
+                cash_allocation_pct=cash_allocation_pct,
                 twstock_client=twstock_client,
             )
             strategy_run.snapshot_json = {
@@ -192,7 +205,9 @@ class StrategyService:
         user_id: int,
         code: str,
         signal: StrategySignal,
+        position_sizing_mode: str,
         buy_quantity: int,
+        cash_allocation_pct: float,
         twstock_client: TwStockClient,
     ) -> StrategyExecutionRead:
         position = self._get_position(user_id=user_id, code=code)
@@ -215,6 +230,15 @@ class StrategyService:
                 message="Position already exists, skipping duplicate buy.",
             )
 
+        if signal.signal == "BUY" and self._count_open_positions(user_id) >= self.settings.max_open_positions:
+            return StrategyExecutionRead(
+                applied=False,
+                action="BUY",
+                quantity=0,
+                status="SKIPPED",
+                message=f"Max open positions reached ({self.settings.max_open_positions}).",
+            )
+
         if signal.signal == "SELL" and (position is None or position.quantity <= 0):
             return StrategyExecutionRead(
                 applied=False,
@@ -224,10 +248,27 @@ class StrategyService:
                 message="No position exists, skipping sell.",
             )
 
-        quantity = buy_quantity if signal.signal == "BUY" else position.quantity
+        quantity = position.quantity if signal.signal == "SELL" else 0
         order_service = OrderService(self.session, twstock_client)
 
         try:
+            if signal.signal == "BUY":
+                account = order_service.user_repository.get_account_by_user_id(user_id)
+                if account is None:
+                    raise TradingServiceError("Account not found.")
+
+                preview_quote = twstock_client.get_realtime_quote(code)
+                fill_price = order_service._resolve_trade_price(preview_quote)
+                quantity = resolve_buy_quantity(
+                    available_cash=account.available_cash,
+                    fill_price=fill_price,
+                    lot_size=self.settings.default_lot_size,
+                    fee_rate=self.settings.default_fee_rate,
+                    position_sizing_mode=position_sizing_mode,
+                    buy_quantity=buy_quantity,
+                    cash_allocation_pct=cash_allocation_pct,
+                )
+
             result = order_service.place_market_order(
                 user_id=user_id,
                 code=code,
@@ -245,7 +286,7 @@ class StrategyService:
                 market_value=result.account.market_value,
                 total_equity=result.account.total_equity,
             )
-        except (TradingServiceError, TwStockClientError) as exc:
+        except (PositionSizingServiceError, TradingServiceError, TwStockClientError) as exc:
             return StrategyExecutionRead(
                 applied=False,
                 action=signal.signal,
@@ -285,3 +326,7 @@ class StrategyService:
             return None
         statement = select(Position).where(Position.user_id == user_id, Position.stock_id == stock.id)
         return self.session.scalar(statement)
+
+    def _count_open_positions(self, user_id: int) -> int:
+        statement = select(Position).where(Position.user_id == user_id, Position.quantity > 0)
+        return len(list(self.session.scalars(statement)))
