@@ -202,6 +202,13 @@ export function SetupPage() {
     ? `正在更新股票主檔與預設同步池，完成後會套用到目前 ${syncTargetsQuery.data?.codes.length ?? 0} 檔預設同步股票。`
     : `正在同步 ${syncTargetCount} 檔股票，區間為 ${rangeStart} 至 ${rangeEnd}。`
   const failedRangeCodes = syncHistoryRangeMutation.data?.failed_codes ?? []
+  const syncedRangeCodes = syncHistoryRangeMutation.data?.codes ?? []
+  const syncedRangeSelectionLabel =
+    syncHistoryRangeMutation.data?.selection_mode === 'custom' ? '手動指定' : '預設同步池'
+  const syncedRangeCodeSummary =
+    syncedRangeCodes.length > 8
+      ? `${syncedRangeCodes.slice(0, 8).join(', ')} 等 ${syncedRangeCodes.length} 檔`
+      : syncedRangeCodes.join(', ')
 
   useEffect(() => {
     if (!isSyncBusy) {
@@ -514,7 +521,7 @@ export function SetupPage() {
           {syncStocksMutation.data ? <p className="success-text">已更新 {syncStocksMutation.data.synced_count} 檔股票主檔。</p> : null}
           {syncHistoryRangeMutation.data ? (
             <p className="success-text">
-              已同步 {syncHistoryRangeMutation.data.synced_rows} 筆區間資料，涵蓋 {syncHistoryRangeMutation.data.synced_codes} 檔股票。
+              已同步 {syncHistoryRangeMutation.data.synced_rows} 筆區間資料，涵蓋 {syncHistoryRangeMutation.data.synced_codes} 檔股票。模式：{syncedRangeSelectionLabel}；實際同步代碼：{syncedRangeCodeSummary}。
             </p>
           ) : null}
           {failedRangeCodes.length > 0 ? <p className="error-text">同步失敗的股票：{failedRangeCodes.join(', ')}</p> : null}

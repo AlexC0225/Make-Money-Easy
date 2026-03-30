@@ -103,9 +103,9 @@ class AutomationService:
         for config in self.user_repository.list_enabled_automation_configs():
             processed_users += 1
             try:
-                selection = market_data_service.resolve_sync_targets(codes=None, user_id=config.user_id)
+                target_codes = market_data_service.resolve_trading_target_codes(user_id=config.user_id)
                 succeeded = 0
-                for code in selection.codes:
+                for code in target_codes:
                     try:
                         result = strategy_service.run_strategy(
                             code=code,

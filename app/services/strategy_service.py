@@ -21,6 +21,7 @@ from app.services.twstock_client import TwStockClient, TwStockClientError
 from app.strategies.base import StrategySignal
 from app.strategies.hybrid_tw_strategy import HybridTwStrategy
 from app.strategies.larry_connors_rsi2_strategy import LarryConnorsRsi2LongStrategy
+from app.strategies.tw_daily_open_momentum_strategy import TaiwanDailyOpenMomentumLongStrategy
 from app.strategies.tw_momentum_breakout_strategy import TaiwanMomentumBreakoutLongStrategy
 
 
@@ -36,6 +37,7 @@ class StrategyService:
         self.strategies = {
             HybridTwStrategy.name: HybridTwStrategy(),
             LarryConnorsRsi2LongStrategy.name: LarryConnorsRsi2LongStrategy(),
+            TaiwanDailyOpenMomentumLongStrategy.name: TaiwanDailyOpenMomentumLongStrategy(),
             TaiwanMomentumBreakoutLongStrategy.name: TaiwanMomentumBreakoutLongStrategy(),
         }
 

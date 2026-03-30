@@ -125,7 +125,8 @@ export function BacktestsPage() {
   const executionTimingLabel =
     highlightedStrategyMeta?.execution_timing === 'next_market_open' ? '隔日開盤執行' : '當日收盤執行'
   const targetSummary = highlightedResult ? summarizeTarget(highlightedResult) : ''
-  const defaultPoolPreview = defaultTargetsQuery.data?.default_pool_codes.slice(0, 8).join(', ') ?? ''
+  const defaultPoolCodes = defaultTargetsQuery.data?.tradable_pool_codes ?? defaultTargetsQuery.data?.default_pool_codes ?? []
+  const defaultPoolPreview = defaultPoolCodes.slice(0, 8).join(', ')
 
   return (
     <div className="page-grid">
@@ -264,7 +265,7 @@ export function BacktestsPage() {
                 {form.code.trim()
                   ? '本次回測會使用你手動輸入的股票清單。'
                   : defaultPoolPreview
-                    ? `本次若留空，會使用系統預設清單：${defaultPoolPreview}${defaultTargetsQuery.data!.default_pool_codes.length > 8 ? ' ...' : ''}`
+                    ? `本次若留空，會使用系統預設清單：${defaultPoolPreview}${defaultPoolCodes.length > 8 ? ' ...' : ''}`
                     : '本次若留空，會使用系統預設清單。'}
               </p>
               <p>最多同時持有 {form.max_open_positions} 檔標的。</p>

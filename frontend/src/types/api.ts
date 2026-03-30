@@ -291,6 +291,12 @@ export type SyncTargetPreview = {
     name: string
     industry?: string | null
   }>
+  tradable_pool_codes: string[]
+  tradable_pool_items: Array<{
+    code: string
+    name: string
+    industry?: string | null
+  }>
 }
 
 export type StockUniverseSyncResult = {

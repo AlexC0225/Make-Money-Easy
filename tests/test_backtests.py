@@ -4,6 +4,7 @@ from app.db.models.market_data import DailyPrice
 from app.db.models.stock import Stock
 from app.db.session import get_session_factory
 from app.services.backtest_service import BacktestService, BacktestSpec
+from app.services.market_data_service import MarketDataService
 from app.services.strategy_service import StrategyService
 from app.strategies.base import StrategySignal
 
@@ -12,13 +13,14 @@ def _seed_backtest_stocks(codes: list[str]) -> None:
     session = get_session_factory()()
     try:
         start_date = date(2025, 1, 1)
+        default_industry = MarketDataService.DEFAULT_SYNC_POOL_INDUSTRIES[0]
 
         for stock_index, code in enumerate(codes):
             stock = Stock(
                 code=code,
                 name=f"Stock {code}",
                 market="TSEC",
-                industry="半導體業",
+                industry=default_industry,
                 is_active=True,
             )
             session.add(stock)
@@ -27,6 +29,7 @@ def _seed_backtest_stocks(codes: list[str]) -> None:
             for offset in range(240):
                 trade_date = start_date + timedelta(days=offset)
                 close_price = 800.0 + (offset * (1.2 + (stock_index * 0.1)))
+                volume = 150_000 + (offset * 100)
                 session.add(
                     DailyPrice(
                         stock_id=stock.id,
@@ -35,8 +38,8 @@ def _seed_backtest_stocks(codes: list[str]) -> None:
                         high_price=close_price + 6,
                         low_price=close_price - 6,
                         close_price=close_price,
-                        volume=100_000 + (offset * 100),
-                        turnover=close_price * (100_000 + (offset * 100)),
+                        volume=volume,
+                        turnover=close_price * volume,
                         transaction_count=1_000 + offset,
                     )
                 )
@@ -77,6 +80,29 @@ def test_run_backtest_creates_single_stock_result(client):
     list_response = client.get("/api/v1/backtests?limit=5")
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+
+def test_run_backtest_uses_warmup_history_before_selected_start_date(client):
+    _seed_backtest_stocks(["2330"])
+
+    response = client.post(
+        "/api/v1/backtests/run",
+        json={
+            "code": "2330",
+            "strategy_name": "connors_rsi2_long",
+            "start_date": "2025-07-20",
+            "end_date": "2025-08-28",
+            "initial_cash": 1_000_000,
+            "position_sizing_mode": "cash_percent",
+            "lot_size": 1000,
+            "cash_allocation_pct": 25,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["stock_code"] == "2330"
+    assert payload["result"]["equity_curve"][0]["date"] == "2025-07-20"
 
 
 def test_run_backtest_creates_portfolio_result(client):
@@ -214,3 +240,26 @@ def test_run_backtest_persists_after_concurrent_write(client, monkeypatch):
 
     assert result.stock_code == "2330"
     assert result.id > 0
+
+
+def test_run_backtest_handles_strategy_history_boundary_without_server_error(client):
+    _seed_backtest_stocks(["2330"])
+
+    response = client.post(
+        "/api/v1/backtests/run",
+        json={
+            "code": "2330",
+            "strategy_name": "tw_daily_open_momentum_long",
+            "start_date": "2025-04-30",
+            "end_date": "2025-08-28",
+            "initial_cash": 1_000_000,
+            "position_sizing_mode": "cash_percent",
+            "lot_size": 1000,
+            "cash_allocation_pct": 25,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["stock_code"] == "2330"
+    assert payload["result"]["equity_curve"][0]["date"] == "2025-05-01"

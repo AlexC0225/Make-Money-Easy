@@ -38,6 +38,28 @@ class StockRepository:
         )
         return list(self.session.scalars(statement))
 
+    def list_active_stocks_by_industries_and_market(
+        self,
+        industries: list[str] | tuple[str, ...],
+        market: str,
+    ) -> list[Stock]:
+        normalized_industries = [industry.strip() for industry in industries if industry.strip()]
+        normalized_market = market.strip()
+        if not normalized_industries or not normalized_market:
+            return []
+
+        statement = (
+            select(Stock)
+            .where(
+                Stock.is_active.is_(True),
+                Stock.market == normalized_market,
+                Stock.industry.is_not(None),
+                func.trim(Stock.industry).in_(normalized_industries),
+            )
+            .order_by(Stock.code)
+        )
+        return list(self.session.scalars(statement))
+
     def list_active_industries(self, industries: list[str] | tuple[str, ...]) -> list[str]:
         normalized_industries = [industry.strip() for industry in industries if industry.strip()]
         if not normalized_industries:
@@ -160,6 +182,16 @@ class StockRepository:
             statement = statement.where(DailyPrice.trade_date <= end_date)
         statement = statement.order_by(DailyPrice.trade_date.asc())
         return list(self.session.scalars(statement))
+
+    def get_recent_daily_prices(self, stock_id: int, limit: int) -> list[DailyPrice]:
+        statement = (
+            select(DailyPrice)
+            .where(DailyPrice.stock_id == stock_id)
+            .order_by(DailyPrice.trade_date.desc())
+            .limit(limit)
+        )
+        rows = list(self.session.scalars(statement))
+        return list(reversed(rows))
 
     def get_latest_trade_date(self):
         statement = select(DailyPrice.trade_date).order_by(DailyPrice.trade_date.desc()).limit(1)

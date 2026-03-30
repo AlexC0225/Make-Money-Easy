@@ -16,7 +16,8 @@ from app.services.position_sizing_service import (
     PositionSizingServiceError,
     resolve_buy_quantity,
 )
-from app.services.strategy_service import StrategyService
+from app.services.strategy_service import StrategyService, StrategyServiceError
+from app.services.twstock_client import TwStockClient
 from app.utils.fees import calculate_fee, calculate_tax
 
 PORTFOLIO_STOCK_CODE = "__PORTFOLIO__"
@@ -70,20 +71,23 @@ class BacktestService:
             minimum_required_history=strategy.minimum_required_history,
         )
 
-        if len(codes) == 1:
-            stock = stocks_by_code[codes[0]]
-            prices = prices_by_code[codes[0]]
-            if strategy.execution_timing == "next_market_open":
-                result_payload = self._run_next_open_backtest(payload, stock, prices)
+        try:
+            if len(codes) == 1:
+                stock = stocks_by_code[codes[0]]
+                prices = prices_by_code[codes[0]]
+                if strategy.execution_timing == "next_market_open":
+                    result_payload = self._run_next_open_backtest(payload, stock, prices)
+                else:
+                    result_payload = self._run_same_close_backtest(payload, stock, prices)
+                result_stock_id = stock.id
             else:
-                result_payload = self._run_same_close_backtest(payload, stock, prices)
-            result_stock_id = stock.id
-        else:
-            if strategy.execution_timing == "next_market_open":
-                result_payload = self._run_next_open_portfolio_backtest(payload, stocks_by_code, prices_by_code)
-            else:
-                result_payload = self._run_same_close_portfolio_backtest(payload, stocks_by_code, prices_by_code)
-            result_stock_id = None
+                if strategy.execution_timing == "next_market_open":
+                    result_payload = self._run_next_open_portfolio_backtest(payload, stocks_by_code, prices_by_code)
+                else:
+                    result_payload = self._run_same_close_portfolio_backtest(payload, stocks_by_code, prices_by_code)
+                result_stock_id = None
+        except StrategyServiceError as exc:
+            raise BacktestServiceError(str(exc)) from exc
 
         # SQLite can fail to upgrade a long-lived read transaction into a writer
         # if another connection commits in the meantime. End the read transaction
@@ -119,6 +123,12 @@ class BacktestService:
 
     def _run_same_close_backtest(self, payload: BacktestSpec, stock: Stock, prices) -> dict:
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
+        start_index = self._find_simulation_start_index(
+            prices=prices,
+            start_date=payload.start_date,
+            code=stock.code,
+            minimum_required_history=strategy.minimum_required_history,
+        )
         cash = payload.initial_cash
         quantity = 0
         entry_cost = 0.0
@@ -128,7 +138,7 @@ class BacktestService:
         executed_trades: list[dict] = []
         realized_pnl = 0.0
 
-        for index in range(strategy.minimum_required_history - 1, len(prices)):
+        for index in range(start_index, len(prices)):
             window = prices[: index + 1]
             current = window[-1]
             position_context = None
@@ -245,6 +255,12 @@ class BacktestService:
 
     def _run_next_open_backtest(self, payload: BacktestSpec, stock: Stock, prices) -> dict:
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
+        start_index = self._find_simulation_start_index(
+            prices=prices,
+            start_date=payload.start_date,
+            code=stock.code,
+            minimum_required_history=strategy.minimum_required_history,
+        )
         cash = payload.initial_cash
         quantity = 0
         entry_cost = 0.0
@@ -254,7 +270,7 @@ class BacktestService:
         executed_trades: list[dict] = []
         realized_pnl = 0.0
 
-        for index in range(strategy.minimum_required_history - 1, len(prices) - 1):
+        for index in range(start_index, len(prices) - 1):
             window = prices[: index + 1]
             current = window[-1]
             next_bar = prices[index + 1]
@@ -379,7 +395,7 @@ class BacktestService:
         prices_by_code: dict[str, list],
     ) -> dict:
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
-        dates = self._collect_trade_dates(prices_by_code)
+        dates = [trade_date for trade_date in self._collect_trade_dates(prices_by_code) if trade_date >= payload.start_date]
         last_close_by_code: dict[str, float] = {}
         positions: dict[str, OpenPositionState] = {}
         equity_curve: list[dict] = []
@@ -530,7 +546,7 @@ class BacktestService:
         prices_by_code: dict[str, list],
     ) -> dict:
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
-        dates = self._collect_trade_dates(prices_by_code)
+        dates = [trade_date for trade_date in self._collect_trade_dates(prices_by_code) if trade_date >= payload.start_date]
         next_bar_lookup = {
             code: {
                 series[index].trade_date: series[index + 1]
@@ -773,33 +789,43 @@ class BacktestService:
             if stock is None:
                 raise BacktestServiceError(f"Stock not found: {code}. Please sync the stock first.")
 
-            prices = self.stock_repository.get_daily_prices(
-                stock.id,
-                start_date=start_date,
-                end_date=end_date,
-            )
+            prices = self.stock_repository.get_daily_prices(stock.id, end_date=end_date)
             if len(prices) < minimum_required_history:
                 raise BacktestServiceError(
                     f"Backtest requires at least {minimum_required_history} trading days of history for {code}."
                 )
+            self._find_simulation_start_index(
+                prices=prices,
+                start_date=start_date,
+                code=code,
+                minimum_required_history=minimum_required_history,
+            )
 
             stocks_by_code[code] = stock
             prices_by_code[code] = prices
 
         return stocks_by_code, prices_by_code
 
+    @staticmethod
+    def _find_simulation_start_index(
+        prices: list,
+        start_date: date,
+        code: str,
+        minimum_required_history: int,
+    ) -> int:
+        for index, item in enumerate(prices):
+            if item.trade_date < start_date:
+                continue
+            return max(index, minimum_required_history - 1)
+        raise BacktestServiceError(f"No historical prices found in the selected date range for {code}.")
+
     def _resolve_backtest_codes(self, codes: list[str]) -> list[str]:
         normalized = [code.strip().upper() for code in codes if code.strip()]
         if normalized:
             return normalized
 
-        default_codes = [
-            stock.code
-            for stock in self.stock_repository.list_active_stocks_by_industries(
-                MarketDataService.DEFAULT_SYNC_POOL_INDUSTRIES
-            )
-            if isinstance(stock.code, str) and stock.code.strip()
-        ]
+        market_data_service = MarketDataService(self.session, TwStockClient())
+        default_codes = market_data_service.list_default_tradable_pool_codes()
         resolved_codes: list[str] = []
         seen: set[str] = set()
         for code in default_codes:

@@ -32,6 +32,8 @@ class SyncTargetPreviewResponse(BaseModel):
     default_pool_codes: list[str]
     default_pool_industries: list[str]
     default_pool_items: list[SyncTargetStockRead] = Field(default_factory=list)
+    tradable_pool_codes: list[str] = Field(default_factory=list)
+    tradable_pool_items: list[SyncTargetStockRead] = Field(default_factory=list)
 
 
 class HistorySyncResponse(SyncTargetPreviewResponse):

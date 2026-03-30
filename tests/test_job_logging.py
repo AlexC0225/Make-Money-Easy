@@ -1,5 +1,5 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.config import get_settings
 from app.db.models.market_data import DailyPrice
@@ -7,6 +7,7 @@ from app.db.models.stock import Stock
 from app.db.session import get_session_factory
 from app.jobs.run_automation import run_daily_workspace_automation_job
 from app.jobs.sync_workspace_data import run_close_sync_workspace_data_job
+from app.services.job_logging_service import JobLoggingService
 from tests.test_stocks import FakeTwStockClient
 
 
@@ -58,9 +59,14 @@ def test_sync_workspace_job_writes_daily_log_when_skipped(client, tmp_path, monk
     records = _read_daily_job_records(log_dir)
     assert records[0]["job_name"] == "sync-workspace-close-data"
     assert records[0]["status"] == "RUNNING"
+    assert records[0]["task_name"] == "Sync workspace close data"
+    assert records[0]["completion"] == {"finished": False, "successful": False}
     assert records[1]["job_name"] == "sync-workspace-close-data"
     assert records[1]["status"] == "SKIPPED"
+    assert records[1]["summary"] == "Task skipped: non_trading_day"
+    assert records[1]["completion"] == {"finished": True, "successful": False}
     assert records[1]["payload"]["reason"] == "non_trading_day"
+    assert {"label": "reason", "value": "non_trading_day"} in records[1]["updates"]
     get_settings.cache_clear()
 
 
@@ -106,8 +112,43 @@ def test_automation_job_writes_execution_status_details(client, tmp_path, monkey
     records = _read_daily_job_records(log_dir)
     assert records[0]["job_name"] == "run-daily-workspace-automation"
     assert records[0]["status"] == "RUNNING"
+    assert records[0]["summary"] == "Task started."
     assert records[1]["job_name"] == "run-daily-workspace-automation"
     assert records[1]["status"] == "SUCCESS"
+    assert records[1]["task_description"] == (
+        "Evaluate automation rules and apply resulting trade actions to each workspace."
+    )
+    assert records[1]["completion"] == {"finished": True, "successful": True}
     assert records[1]["payload"]["execution_details"][0]["code"] == "2330"
     assert records[1]["payload"]["execution_details"][0]["execution"]["status"] == "SKIPPED"
+    assert {"label": "processed_users", "value": result["processed_users"]} in records[1]["updates"]
+    assert {"label": "applied_users", "value": result["applied_users"]} in records[1]["updates"]
+    assert {
+        "label": "execution_summary",
+        "value": {"total": 1, "applied": 0, "skipped": 1, "failed": 0},
+    } in records[1]["updates"]
     get_settings.cache_clear()
+
+
+def test_job_logging_service_writes_clear_failure_details(tmp_path):
+    logger = JobLoggingService(log_dir=str(tmp_path), timezone="Asia/Taipei")
+
+    logger.log_event(
+        job_name="sync-stock-universe",
+        status="FAILED",
+        event="failed",
+        payload={"error": "upstream timeout"},
+        occurred_at=datetime(2026, 3, 30, 15, 45, 12),
+    )
+
+    records = _read_daily_job_records(tmp_path)
+    assert len(records) == 1
+    assert records[0]["time"] == {
+        "date": "2026-03-30",
+        "time": "15:45:12",
+        "timezone": "Asia/Taipei",
+    }
+    assert records[0]["task_name"] == "Sync stock universe"
+    assert records[0]["summary"] == "Task failed: upstream timeout"
+    assert records[0]["completion"] == {"finished": True, "successful": False}
+    assert {"label": "error", "value": "upstream timeout"} in records[0]["updates"]

@@ -1,4 +1,10 @@
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
+
 from app.api.deps import get_twstock_client
+from app.db.models.stock import Stock
+from app.db.session import get_session_factory
+from app.services.market_data_service import MarketDataService
 from tests.test_stocks import FakeTwStockClient
 
 
@@ -158,3 +164,64 @@ def test_sync_history_range_only_uses_manual_codes_when_provided(client):
     assert payload["default_pool_items"] == []
     assert payload["synced_codes"] == 2
     assert payload["failed_codes"] == []
+
+
+def test_sync_history_range_isolates_failed_code_writes(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+    original_sync_history_range = MarketDataService.sync_history_range
+
+    def flaky_sync_history_range(self, code, start_date, end_date):
+        if code == "2454":
+            raise OperationalError("UPDATE daily_prices ...", {}, Exception("database is locked"))
+        return original_sync_history_range(self, code, start_date, end_date)
+
+    monkeypatch.setattr(
+        "app.services.market_data_service.MarketDataService.sync_history_range",
+        flaky_sync_history_range,
+    )
+
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330", "2454"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["synced_codes"] == 1
+    assert payload["failed_codes"] == ["2454"]
+
+    session = get_session_factory()()
+    try:
+        stock = session.execute(select(Stock).where(Stock.code == "2330")).scalar_one()
+        prices = stock.daily_prices
+        assert len(prices) == 3
+    finally:
+        session.close()
+
+
+def test_sync_history_range_returns_503_when_database_is_busy(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    def raise_locked_error(self, codes, start_date, end_date, user_id=None):
+        raise OperationalError("UPDATE daily_prices ...", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(
+        "app.api.routes.jobs.MarketDataService.sync_history_range_batch",
+        raise_locked_error,
+    )
+
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database is busy. Please retry the sync in a few seconds."
