@@ -27,7 +27,7 @@ def build_scheduler() -> BackgroundScheduler:
     )
     scheduler.add_job(
         run_daily_workspace_automation_job,
-        CronTrigger(hour=9, minute=0, timezone=settings.scheduler_timezone),
+        CronTrigger(hour=9, minute=30, timezone=settings.scheduler_timezone),
         id="run-daily-workspace-automation",
         replace_existing=True,
     )

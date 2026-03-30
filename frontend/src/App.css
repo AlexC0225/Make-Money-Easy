@@ -1229,6 +1229,52 @@ select {
   gap: 0.85rem;
 }
 
+.signal-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.signal-filter-field {
+  min-width: 220px;
+}
+
+.signal-filter-field span {
+  font-size: 0.82rem;
+  color: #5d7771;
+}
+
+.signal-list--scrollable {
+  max-height: 32rem;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.tab-button {
+  border: 1px solid rgba(16, 46, 42, 0.12);
+  border-radius: 999px;
+  background: rgba(17, 49, 45, 0.04);
+  color: #23433f;
+  padding: 0.6rem 0.95rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.tab-button--active {
+  border-color: rgba(12, 124, 89, 0.26);
+  background: rgba(12, 124, 89, 0.1);
+  color: #0c7c59;
+}
+
 .signal-item {
   display: flex;
   justify-content: space-between;
@@ -1242,6 +1288,42 @@ select {
 .signal-item p {
   margin: 0.35rem 0 0;
   color: #5d7771;
+}
+
+.signal-item--stacked {
+  align-items: flex-start;
+}
+
+.signal-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.signal-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+}
+
+.signal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  color: #4f6b66;
+  font-size: 0.9rem;
+}
+
+.signal-industry-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.38rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(17, 49, 45, 0.08);
+  color: #173733;
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .signal-item-button {

@@ -10,11 +10,13 @@ import type {
   LoginPayload,
   LoginResponse,
   MarketOverview,
+  ListSignalsOptions,
   PortfolioBootstrapPayload,
   PortfolioBootstrapResponse,
   PortfolioSummary,
   Position,
   Quote,
+  TradeExecution,
   StockUniverseSyncResult,
   StockLookupItem,
   StrategyDefinition,
@@ -43,11 +45,18 @@ export const api = {
     request<Position[]>('/portfolio/positions', {
       params: { user_id: userId, include_closed: false },
     }),
+  getTrades: (userId: number, limit = 20) =>
+    request<TradeExecution[]>('/portfolio/trades', {
+      params: { user_id: userId, limit },
+    }),
   searchStocks: (query: string, limit = 10) =>
     request<StockLookupItem[]>('/stocks/search', {
       params: { q: query, limit },
     }),
-  getQuote: (code: string) => request<Quote>(`/stocks/${code}/quote`),
+  getQuote: (code: string, options?: { forceRefresh?: boolean }) =>
+    request<Quote>(`/stocks/${code}/quote`, {
+      params: options?.forceRefresh ? { force_refresh: true } : undefined,
+    }),
   getHistoryRange: (code: string, startDate: string, endDate: string) =>
     request<HistoricalRange>(`/stocks/${code}/history-range`, {
       params: { start_date: startDate, end_date: endDate },
@@ -64,8 +73,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  listSignals: (limit = 8, strategyName?: string) =>
-    request<StrategySignal[]>('/strategies/signals', { params: { limit, strategy_name: strategyName } }),
+  listSignals: (options: ListSignalsOptions = {}) =>
+    request<StrategySignal[]>('/strategies/signals', {
+      params: {
+        limit: options.limit,
+        strategy_name: options.strategyName,
+        latest_only: options.latestOnly,
+        industry: options.industry,
+      },
+    }),
   listBacktests: (limit = 8) =>
     request<BacktestResult[]>('/backtests', { params: { limit } }),
   runBacktest: (payload: BacktestRunPayload) =>

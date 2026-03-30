@@ -14,6 +14,19 @@ class PositionRead(BaseModel):
     updated_at: datetime
 
 
+class TradeRead(BaseModel):
+    id: int
+    order_id: int
+    stock_code: str
+    stock_name: str
+    side: str
+    fill_price: float
+    fill_quantity: int
+    fee: int
+    tax: int
+    executed_at: datetime
+
+
 class PortfolioSummaryRead(BaseModel):
     user_id: int
     available_cash: float

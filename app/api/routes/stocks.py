@@ -140,11 +140,12 @@ def get_stock_history_range(
 def get_realtime_quote(
     code: str,
     persist: bool = Query(default=False),
+    force_refresh: bool = Query(default=False),
     db: Session = Depends(get_db_session),
     client: TwStockClient = Depends(get_twstock_client),
 ) -> RealtimeQuoteRead:
     try:
-        quote = client.get_realtime_quote(code=code)
+        quote = client.get_realtime_quote(code=code, force_refresh=force_refresh)
         if persist:
             repository = StockRepository(db)
             stock = repository.upsert_stock(**client.get_stock_metadata(code))

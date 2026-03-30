@@ -24,17 +24,17 @@ export function PositionEditor({ positions, onChange }: PositionEditorProps) {
   }
 
   const quoteMutation = useMutation({
-    mutationFn: async ({ code, fallbackPrice }: { code: string; fallbackPrice?: number | null }) => {
+    mutationFn: async ({ code }: { code: string }) => {
       try {
         const quote = await api.getQuote(code)
-        return quote.reference_price ?? quote.latest_trade_price ?? quote.open_price ?? fallbackPrice ?? null
+        return quote.latest_trade_price ?? null
       } catch {
-        return fallbackPrice ?? null
+        return null
       }
     },
   })
 
-  const resolveStock = (index: number, code: string, latestPrice?: number | null) => {
+  const resolveStock = (index: number, code: string) => {
     const current = positions[index]
     const normalizedCode = code.trim()
 
@@ -46,18 +46,7 @@ export function PositionEditor({ positions, onChange }: PositionEditorProps) {
       return
     }
 
-    if (latestPrice !== undefined && latestPrice !== null && latestPrice > 0) {
-      const next = [...positions]
-      next[index] = {
-        ...next[index],
-        code: normalizedCode,
-        market_price: latestPrice,
-      }
-      onChange(next)
-      return
-    }
-
-    void quoteMutation.mutateAsync({ code: normalizedCode, fallbackPrice: latestPrice }).then((resolvedPrice) => {
+    void quoteMutation.mutateAsync({ code: normalizedCode }).then((resolvedPrice) => {
       if (resolvedPrice === undefined || resolvedPrice === null) {
         return
       }
@@ -107,7 +96,7 @@ export function PositionEditor({ positions, onChange }: PositionEditorProps) {
               <StockAutocompleteInput
                 value={position.code}
                 onChange={(value) => updatePosition(index, 'code', value)}
-                onResolved={(stock) => resolveStock(index, stock.code, stock.latest_price)}
+                onResolved={(stock) => resolveStock(index, stock.code)}
                 placeholder="例如 2330"
               />
             </label>

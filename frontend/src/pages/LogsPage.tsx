@@ -9,8 +9,18 @@ import { clsx, formatCurrency, formatPercent } from '../lib/format'
 import { getBacktestStrategy, setBacktestStrategy } from '../lib/storage'
 import type { BacktestResult, BacktestRunPayload, BacktestTrade } from '../types/api'
 
+type SignalTab = 'SELL' | 'HOLD' | 'BUY'
+
 function signalBadge(signal: string) {
   return `signal-badge signal-badge--${signal.toLowerCase()}`
+}
+
+function normalizeSignalTab(signal: string): SignalTab {
+  const normalized = signal.trim().toUpperCase()
+  if (normalized === 'SELL' || normalized === 'HOLD' || normalized === 'BUY') {
+    return normalized
+  }
+  return 'HOLD'
 }
 
 function describeStrategy(strategyName?: string) {
@@ -46,6 +56,7 @@ function createInitialBacktestForm(): BacktestRunPayload {
     position_sizing_mode: 'fixed_shares',
     lot_size: 1000,
     cash_allocation_pct: 10,
+    max_open_positions: 20,
   }
 }
 
@@ -63,6 +74,7 @@ export function LogsPage() {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<BacktestRunPayload>(() => createInitialBacktestForm())
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
+  const [selectedSignalTab, setSelectedSignalTab] = useState<SignalTab>('SELL')
 
   const strategyCatalogQuery = useQuery({
     queryKey: ['strategy-catalog'],
@@ -92,7 +104,7 @@ export function LogsPage() {
 
   const signalsQuery = useQuery({
     queryKey: ['signals', 'all'],
-    queryFn: () => api.listSignals(20),
+    queryFn: () => api.listSignals({ limit: 20 }),
   })
 
   const backtestsQuery = useQuery({
@@ -126,6 +138,8 @@ export function LogsPage() {
   const executionTimingLabel =
     highlightedStrategyMeta?.execution_timing === 'next_market_open' ? '隔日開盤執行' : '當日收盤執行'
   const targetSummary = highlightedResult ? summarizeTarget(highlightedResult) : ''
+  const signalTabs: SignalTab[] = ['SELL', 'HOLD', 'BUY']
+  const filteredSignals = (signalsQuery.data ?? []).filter((signal) => normalizeSignalTab(signal.signal) === selectedSignalTab)
 
   return (
     <div className="page-grid">
@@ -414,7 +428,7 @@ export function LogsPage() {
 
       <div className="dashboard-columns dashboard-columns--wide">
         <Panel title="回測紀錄" subtitle="Backtest Logs">
-          <div className="signal-list">
+          <div className="signal-list signal-list--scrollable">
             {(backtestsQuery.data ?? []).map((item) => (
               <button
                 className={clsx('signal-item signal-item-button', item.id === highlightedResult?.id && 'signal-item-button--active')}
@@ -440,19 +454,42 @@ export function LogsPage() {
         </Panel>
 
         <Panel title="最新訊號" subtitle="Signals">
-          <div className="signal-list">
-            {(signalsQuery.data ?? []).map((signal) => (
-              <article className="signal-item" key={signal.id}>
-                <div>
-                  <strong>
-                    {signal.strategy_name} / {signal.stock_code} {signal.stock_name}
-                  </strong>
-                  <p>{signal.execution?.message ?? signal.signal_reason ?? '目前沒有額外訊號說明。'}</p>
-                </div>
-                <span className={signalBadge(signal.signal)}>{signal.signal}</span>
-              </article>
-            ))}
-            {(signalsQuery.data ?? []).length === 0 ? <div className="empty-card">目前還沒有策略訊號。</div> : null}
+          <div className="stack-form">
+            <div className="tab-row" role="tablist" aria-label="訊號類型">
+              {signalTabs.map((tab) => {
+                const count = (signalsQuery.data ?? []).filter((signal) => normalizeSignalTab(signal.signal) === tab).length
+                return (
+                  <button
+                    key={tab}
+                    className={clsx('tab-button', selectedSignalTab === tab && 'tab-button--active')}
+                    type="button"
+                    role="tab"
+                    aria-selected={selectedSignalTab === tab}
+                    onClick={() => setSelectedSignalTab(tab)}
+                  >
+                    {tab} {count}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="signal-list signal-list--scrollable">
+              {filteredSignals.map((signal) => (
+                <article className="signal-item" key={signal.id}>
+                  <div>
+                    <strong>
+                      {signal.strategy_name} / {signal.stock_code} {signal.stock_name}
+                    </strong>
+                    <p>{signal.execution?.message ?? signal.signal_reason ?? '目前沒有額外訊號說明。'}</p>
+                  </div>
+                  <span className={signalBadge(signal.signal)}>{signal.signal}</span>
+                </article>
+              ))}
+              {(signalsQuery.data ?? []).length === 0 ? <div className="empty-card">目前還沒有策略訊號。</div> : null}
+              {(signalsQuery.data ?? []).length > 0 && filteredSignals.length === 0 ? (
+                <div className="empty-card">目前沒有 {selectedSignalTab} 訊號。</div>
+              ) : null}
+            </div>
           </div>
         </Panel>
       </div>

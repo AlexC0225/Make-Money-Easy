@@ -178,16 +178,10 @@ class OrderService:
         return self.session.scalar(statement)
 
     def _resolve_trade_price(self, quote) -> float:
-        for candidate in (
-            getattr(quote, "reference_price", None),
-            quote.latest_trade_price,
-            quote.open_price,
-            quote.high_price,
-            quote.low_price,
-        ):
-            if candidate is not None and candidate > 0:
-                return candidate
-        raise TradingServiceError("Unable to resolve a valid trade price from quote data.")
+        latest_trade_price = getattr(quote, "latest_trade_price", None)
+        if latest_trade_price is not None and latest_trade_price > 0:
+            return latest_trade_price
+        raise TradingServiceError("Realtime latest trade price is unavailable.")
 
     def _refresh_account_metrics(self, user_id: int) -> Account:
         account = self.user_repository.get_account_by_user_id(user_id)

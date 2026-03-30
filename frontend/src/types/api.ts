@@ -86,6 +86,9 @@ export type Quote = {
   name?: string
   quote_time: string
   latest_trade_price?: number
+  latest_trade_price_available: boolean
+  latest_trade_price_source: 'realtime' | 'cache' | 'unavailable'
+  warning_message?: string | null
   reference_price?: number
   open_price?: number
   high_price?: number
@@ -141,10 +144,12 @@ export type StrategySignal = {
   strategy_name: string
   stock_code: string
   stock_name: string
+  industry?: string | null
   signal: string
   signal_reason?: string
   signal_time: string
-  snapshot: Record<string, number | string>
+  created_at?: string | null
+  snapshot: Record<string, number | string | null>
   execution?: {
     applied: boolean
     action: string
@@ -155,6 +160,13 @@ export type StrategySignal = {
     market_value?: number
     total_equity?: number
   } | null
+}
+
+export type ListSignalsOptions = {
+  limit?: number
+  strategyName?: string
+  latestOnly?: boolean
+  industry?: string
 }
 
 export type StrategyRunPayload = {
@@ -245,6 +257,20 @@ export type BacktestRunPayload = {
   position_sizing_mode: 'fixed_shares' | 'cash_percent'
   lot_size: number
   cash_allocation_pct: number
+  max_open_positions: number
+}
+
+export type TradeExecution = {
+  id: number
+  order_id: number
+  stock_code: string
+  stock_name: string
+  side: 'BUY' | 'SELL'
+  fill_price: number
+  fill_quantity: number
+  fee: number
+  tax: number
+  executed_at: string
 }
 
 export type HistoryRangeSyncPayload = {

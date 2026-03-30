@@ -128,7 +128,7 @@ function TradeDot({ cx = 0, cy = 0, payload }: TradeDotProps) {
 }
 
 export function BacktestPriceChart({ prices, trades, executionTimingLabel }: BacktestPriceChartProps) {
-  const buyTrades = trades
+  const buyTrades: TradePoint[] = trades
     .filter((trade) => trade.side === 'BUY')
     .map((trade) => ({
       date: trade.date,
@@ -141,7 +141,7 @@ export function BacktestPriceChart({ prices, trades, executionTimingLabel }: Bac
       executionTimingLabel,
     }))
 
-  const sellTrades = trades
+  const sellTrades: TradePoint[] = trades
     .filter((trade) => trade.side === 'SELL')
     .map((trade) => ({
       date: trade.date,
@@ -157,25 +157,21 @@ export function BacktestPriceChart({ prices, trades, executionTimingLabel }: Bac
   const buyTradeByDate = new Map(buyTrades.map((trade) => [trade.date, trade]))
   const sellTradeByDate = new Map(sellTrades.map((trade) => [trade.date, trade]))
 
-  const points = prices
-    .map((item) => {
-      const price = item.close_price ?? item.open_price ?? item.high_price ?? item.low_price
-      if (price === null) {
-        return null
-      }
+  const points: BacktestChartRow[] = []
+  for (const item of prices) {
+    const price = item.close_price ?? item.open_price ?? item.high_price ?? item.low_price
+    if (price === null) {
+      continue
+    }
 
-      const buyTrade = buyTradeByDate.get(item.trade_date)
-      const sellTrade = sellTradeByDate.get(item.trade_date)
-
-      return {
-        date: item.trade_date,
-        price,
-        buyTrade,
-        sellTrade,
-      }
+    points.push({
+      date: item.trade_date,
+      price,
+      buyTrade: buyTradeByDate.get(item.trade_date),
+      sellTrade: sellTradeByDate.get(item.trade_date),
     })
-    .filter((item): item is BacktestChartRow => item !== null)
-    .sort((left, right) => left.date.localeCompare(right.date))
+  }
+  points.sort((left, right) => left.date.localeCompare(right.date))
 
   if (points.length === 0) {
     return <div className="empty-card">目前沒有可繪製的回測價格資料。</div>
@@ -185,8 +181,8 @@ export function BacktestPriceChart({ prices, trades, executionTimingLabel }: Bac
   const tradeValues = trades.length > 0 ? trades.map((trade) => trade.price) : pricesOnly
   const minPrice = Math.min(...pricesOnly, ...tradeValues)
   const maxPrice = Math.max(...pricesOnly, ...tradeValues)
-  const first = points[0]
-  const latest = points[points.length - 1]
+  const first = points[0]!
+  const latest = points[points.length - 1]!
   const priceMin = Math.floor(minPrice * 0.98)
   const priceMax = Math.ceil(maxPrice * 1.02)
 

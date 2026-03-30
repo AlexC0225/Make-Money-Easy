@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CandlestickChart, RefreshCw, Wallet } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -30,11 +30,24 @@ function toDateInputValue(input: Date) {
   return `${year}-${month}-${day}`
 }
 
+function describeQuoteSource(source?: 'realtime' | 'cache' | 'unavailable') {
+  switch (source) {
+    case 'cache':
+      return '最新成交價暫用快取'
+    case 'unavailable':
+      return '目前沒有最新成交價'
+    default:
+      return '最新成交價來自即時快照'
+  }
+}
+
 export function DashboardPage() {
   const queryClient = useQueryClient()
   const activeUserId = getActiveUserId()
   const [symbolInput, setSymbolInput] = useState('2330')
   const [resolvedStockCode, setResolvedStockCode] = useState<string | null>(null)
+  const [activeSymbol, setActiveSymbol] = useState<string | null>(null)
+  const [quoteThrottleMessage, setQuoteThrottleMessage] = useState<string | null>(null)
   const [chartStart, setChartStart] = useState(() => {
     const today = new Date()
     const start = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())
@@ -42,12 +55,24 @@ export function DashboardPage() {
   })
   const [chartEnd, setChartEnd] = useState(() => toDateInputValue(new Date()))
   const [autoRefreshQuote, setAutoRefreshQuote] = useState(true)
-  const deferredSymbol = useDeferredValue((resolvedStockCode ?? symbolInput).trim().toUpperCase())
-  const isSymbolReady = deferredSymbol.length >= 4
+  const normalizedSymbol = (resolvedStockCode ?? symbolInput).trim().toUpperCase()
+  const isSymbolReady = normalizedSymbol.length >= 4
+  const activeSymbolRef = useRef<string | null>(null)
+  const quoteRequestTimesRef = useRef<number[]>([])
+  const queuedSymbolRef = useRef<string | null>(null)
+  const queuedTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    activeSymbolRef.current = activeSymbol
+  }, [activeSymbol])
 
   const updateSymbolInput = (value: string) => {
     const normalizedValue = value.trim().toUpperCase()
     setSymbolInput(value)
+
+    if (activeSymbol && normalizedValue !== activeSymbol) {
+      setActiveSymbol(null)
+    }
 
     if (!resolvedStockCode || normalizedValue === resolvedStockCode) {
       return
@@ -64,7 +89,72 @@ export function DashboardPage() {
 
     setResolvedStockCode(normalizedCode)
     setSymbolInput(normalizedCode)
+    requestQuoteActivation(normalizedCode)
   }
+
+  const requestQuoteActivation = (symbol: string, forceRefetch = false) => {
+    const now = Date.now()
+    const recentRequests = quoteRequestTimesRef.current.filter((timestamp) => now - timestamp < 5_000)
+    quoteRequestTimesRef.current = recentRequests
+
+    if (recentRequests.length < 3) {
+      quoteRequestTimesRef.current = [...recentRequests, now]
+      setQuoteThrottleMessage(null)
+      queuedSymbolRef.current = null
+      if (queuedTimerRef.current !== null) {
+        window.clearTimeout(queuedTimerRef.current)
+        queuedTimerRef.current = null
+      }
+
+      if (activeSymbolRef.current !== symbol) {
+        setActiveSymbol(symbol)
+        return
+      }
+
+      if (forceRefetch) {
+        void quoteQuery.refetch()
+        void historyQuery.refetch()
+      }
+      return
+    }
+
+    const earliestRequest = recentRequests[0]
+    const waitMs = Math.max(0, 5_000 - (now - earliestRequest)) + 50
+    queuedSymbolRef.current = symbol
+    setQuoteThrottleMessage(`即時報價請求過快，將在 ${Math.ceil(waitMs / 1000)} 秒後自動更新。`)
+
+    if (queuedTimerRef.current !== null) {
+      window.clearTimeout(queuedTimerRef.current)
+    }
+
+    queuedTimerRef.current = window.setTimeout(() => {
+      queuedTimerRef.current = null
+      const queuedSymbol = queuedSymbolRef.current
+      queuedSymbolRef.current = null
+      if (!queuedSymbol) {
+        return
+      }
+      requestQuoteActivation(queuedSymbol, true)
+    }, waitMs)
+  }
+
+  const refreshMarketView = () => {
+    if (!isSymbolReady) {
+      return
+    }
+
+    setResolvedStockCode(normalizedSymbol)
+    setSymbolInput(normalizedSymbol)
+    requestQuoteActivation(normalizedSymbol, true)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (queuedTimerRef.current !== null) {
+        window.clearTimeout(queuedTimerRef.current)
+      }
+    }
+  }, [])
 
   const userQuery = useQuery({
     queryKey: ['user', activeUserId],
@@ -116,19 +206,21 @@ export function DashboardPage() {
   })
 
   const quoteQuery = useQuery({
-    queryKey: ['quote', deferredSymbol],
-    queryFn: () => api.getQuote(deferredSymbol),
-    enabled: isSymbolReady,
-    refetchInterval: autoRefreshQuote ? 15_000 : false,
-    staleTime: 10_000,
+    queryKey: ['quote', activeSymbol],
+    queryFn: () => api.getQuote(activeSymbol!, { forceRefresh: true }),
+    enabled: activeSymbol !== null,
+    refetchInterval: autoRefreshQuote && activeSymbol ? 15_000 : false,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
     retry: false,
   })
 
   const historyQuery = useQuery({
-    queryKey: ['history-range', deferredSymbol, chartStart, chartEnd],
-    queryFn: () => api.getHistoryRange(deferredSymbol, chartStart, chartEnd),
-    enabled: isSymbolReady,
+    queryKey: ['history-range', activeSymbol, chartStart, chartEnd],
+    queryFn: () => api.getHistoryRange(activeSymbol!, chartStart, chartEnd),
+    enabled: activeSymbol !== null,
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   })
 
@@ -215,10 +307,7 @@ export function DashboardPage() {
               <button
                 className="ghost-button"
                 type="button"
-                onClick={() => {
-                  void quoteQuery.refetch()
-                  void historyQuery.refetch()
-                }}
+                onClick={refreshMarketView}
               >
                 <RefreshCw size={16} />
                 重新整理
@@ -247,13 +336,14 @@ export function DashboardPage() {
                 <div>
                   <span>{quoteQuery.data.name ?? quoteQuery.data.code}</span>
                   <strong>
-                    {quoteQuery.data.reference_price ?? quoteQuery.data.latest_trade_price
-                      ? formatCurrency(quoteQuery.data.reference_price ?? quoteQuery.data.latest_trade_price ?? 0)
+                    {quoteQuery.data.latest_trade_price
+                      ? formatCurrency(quoteQuery.data.latest_trade_price)
                       : '--'}
                   </strong>
                 </div>
                 <div className="quote-meta">
                   <p>報價時間 {new Date(quoteQuery.data.quote_time).toLocaleTimeString('zh-TW', { hour12: false })}</p>
+                  <p>{describeQuoteSource(quoteQuery.data.latest_trade_price_source)}</p>
                   <p>開 {quoteQuery.data.open_price ?? '--'}</p>
                   <p>高 {quoteQuery.data.high_price ?? '--'}</p>
                   <p>低 {quoteQuery.data.low_price ?? '--'}</p>
@@ -262,6 +352,8 @@ export function DashboardPage() {
               </div>
             ) : null}
 
+            {quoteThrottleMessage ? <p className="muted-text">{quoteThrottleMessage}</p> : null}
+            {quoteQuery.data?.warning_message ? <p className="muted-text">{quoteQuery.data.warning_message}</p> : null}
             {historyQuery.isPending ? <p className="muted-text">正在載入歷史圖表資料...</p> : null}
             {historyQuery.data ? <KLineChart data={historyQuery.data.prices} /> : null}
             {historyQuery.isSuccess && !historyQuery.data ? <div className="empty-card">目前沒有可顯示的圖表資料。</div> : null}

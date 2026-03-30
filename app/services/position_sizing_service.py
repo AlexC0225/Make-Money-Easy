@@ -39,13 +39,13 @@ def resolve_buy_quantity(
         raise PositionSizingServiceError("Cash allocation percent must be between 0 and 100.")
 
     allocation_budget = available_cash * (cash_allocation_pct / 100)
-    quantity = floor(allocation_budget / fill_price / lot_size) * lot_size
+    quantity = floor(allocation_budget / fill_price)
 
     while quantity > 0:
         trade_amount = fill_price * quantity
         total_cost = trade_amount + calculate_fee(trade_amount, fee_rate)
         if total_cost <= available_cash and total_cost <= allocation_budget:
             return quantity
-        quantity -= lot_size
+        quantity -= 1
 
-    raise PositionSizingServiceError("Cash allocation is insufficient to buy the minimum lot size.")
+    raise PositionSizingServiceError("Cash allocation is insufficient to buy any shares.")

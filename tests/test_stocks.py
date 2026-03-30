@@ -79,12 +79,13 @@ class FakeTwStockClient:
             close_price += 1
         return rows
 
-    def get_realtime_quote(self, code: str):
+    def get_realtime_quote(self, code: str, force_refresh: bool = False):
         return RealtimeQuoteRead(
             code=code,
             name="TSMC" if code == "2330" else "HonHai",
             quote_time=datetime(2026, 3, 27, 9, 0, 0),
             latest_trade_price=108.0,
+            latest_trade_price_available=True,
             reference_price=108.0,
             open_price=100.0,
             high_price=110.0,
@@ -94,6 +95,27 @@ class FakeTwStockClient:
             best_ask_price=[108.0, 108.5],
             best_bid_volume=[100, 200],
             best_ask_volume=[150, 250],
+        )
+
+
+class MissingLatestTradePriceTwStockClient(FakeTwStockClient):
+    def get_realtime_quote(self, code: str, force_refresh: bool = False):
+        return RealtimeQuoteRead(
+            code=code,
+            name="TSMC" if code == "2330" else "HonHai",
+            quote_time=datetime(2026, 3, 30, 10, 26, 45),
+            latest_trade_price=None,
+            latest_trade_price_available=False,
+            warning_message=f"Realtime latest trade price is unavailable for {code} after snapshot 2026-03-30 10:26:45 (attempt 4/4).",
+            reference_price=1787.5,
+            open_price=1780.0,
+            high_price=1790.0,
+            low_price=1780.0,
+            accumulate_trade_volume=16680,
+            best_bid_price=[1780.0],
+            best_ask_price=[1790.0],
+            best_bid_volume=[4875],
+            best_ask_volume=[1047],
         )
 
 
@@ -129,6 +151,19 @@ def test_get_realtime_quote(client):
     payload = response.json()
     assert payload["code"] == "2330"
     assert payload["latest_trade_price"] == 108.0
+
+
+def test_get_realtime_quote_returns_snapshot_without_502_when_latest_trade_price_is_missing(client):
+    client.app.dependency_overrides[get_twstock_client] = MissingLatestTradePriceTwStockClient
+
+    response = client.get("/api/v1/stocks/2330/quote")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == "2330"
+    assert payload["latest_trade_price"] is None
+    assert payload["latest_trade_price_available"] is False
+    assert "Realtime latest trade price is unavailable" in payload["warning_message"]
 
 
 def test_get_history_range_from_database(client):

@@ -3,18 +3,20 @@ import { Activity, BriefcaseBusiness, LineChart, ListChecks, LogOut } from 'luci
 import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { clearActiveUserId, getActiveUserId } from './lib/storage'
+import { BacktestsPage } from './pages/BacktestsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { LoginPage } from './pages/LoginPage'
-import { LogsPage } from './pages/LogsPage'
 import { MarketPage } from './pages/MarketPage'
 import { SetupPage } from './pages/SetupPage'
+import { StrategySignalsPage } from './pages/StrategySignalsPage'
 import './App.css'
 
 const navigation = [
-  { to: '/dashboard', label: '工作臺', icon: BriefcaseBusiness },
-  { to: '/market', label: '關注清單', icon: Activity },
-  { to: '/logs', label: '策略計畫', icon: LineChart },
-  { to: '/setup', label: '工作區設定', icon: ListChecks },
+  { to: '/dashboard', label: '工作台', icon: BriefcaseBusiness },
+  { to: '/market', label: '行情觀察', icon: Activity },
+  { to: '/backtests', label: '回測分析', icon: LineChart },
+  { to: '/signals', label: '策略訊號', icon: ListChecks },
+  { to: '/setup', label: '工作台設定', icon: ListChecks },
 ]
 
 function RequireSession({ children }: { children: ReactElement }) {
@@ -33,7 +35,7 @@ function AppShell() {
             <p className="brand-kicker">Taiwan Paper Trading</p>
             <h1>Make Money Easy</h1>
             <p className="brand-copy">
-              把工作臺、關注清單、手動回測與資料同步整理在同一個節奏裡，讓台股研究和模擬交易更容易維持一致。
+              用同一個工作台把持倉、策略訊號、回測結果與市場觀察拆開管理，讓日常判讀更清楚。
             </p>
           </div>
 
@@ -48,7 +50,7 @@ function AppShell() {
 
           {activeUserId !== null ? (
             <div className="sidebar-session">
-              <p>目前工作區已啟用，可以直接維護自選股票、查看持倉，並執行手動回測。</p>
+              <p>目前已登入工作台，可以查看持倉、策略訊號、實盤成交與回測紀錄。</p>
               <button
                 className="ghost-button ghost-button--sidebar"
                 type="button"
@@ -65,8 +67,8 @@ function AppShell() {
         </div>
 
         <div className="sidebar-footnote">
-          <p>預設同步範圍會以自選關注清單與科技、金融產業股票池為核心，重複股票只會同步一次。</p>
-          <p>策略選擇會跟著手動回測流程走，不再混在其他頁面的日常操作裡。</p>
+          <p>回測分析只看歷史績效；策略訊號頁則專心放最新訊號與實盤成交，避免資訊混雜。</p>
+          <p>實際下單前仍建議先確認策略條件、資金配置與同步資料範圍。</p>
         </div>
       </aside>
 
@@ -90,13 +92,22 @@ function AppShell() {
             }
           />
           <Route
-            path="/logs"
+            path="/backtests"
             element={
               <RequireSession>
-                <LogsPage />
+                <BacktestsPage />
               </RequireSession>
             }
           />
+          <Route
+            path="/signals"
+            element={
+              <RequireSession>
+                <StrategySignalsPage />
+              </RequireSession>
+            }
+          />
+          <Route path="/logs" element={<Navigate to="/backtests" replace />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="*" element={<Navigate to={activeUserId ? '/dashboard' : '/login'} replace />} />
         </Routes>

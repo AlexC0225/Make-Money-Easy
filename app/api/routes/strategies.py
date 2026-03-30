@@ -84,8 +84,15 @@ def update_automation_config(
 @router.get("/signals", response_model=list[StrategySignalRead])
 def list_signals(
     strategy_name: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    industry: str | None = Query(default=None),
+    latest_only: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=1000),
     db: Session = Depends(get_db_session),
 ) -> list[StrategySignalRead]:
     service = StrategyService(db)
-    return service.list_signals(strategy_name=strategy_name, limit=limit)
+    return service.list_signals(
+        strategy_name=strategy_name,
+        industry=industry,
+        latest_only=latest_only,
+        limit=limit,
+    )

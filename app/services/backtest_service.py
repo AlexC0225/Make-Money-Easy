@@ -11,6 +11,7 @@ from app.db.models.strategy import BacktestResult
 from app.db.models.stock import Stock
 from app.db.repositories.stock_repository import StockRepository
 from app.schemas.strategy import BacktestResultRead
+from app.services.market_data_service import MarketDataService
 from app.services.position_sizing_service import (
     PositionSizingServiceError,
     resolve_buy_quantity,
@@ -37,6 +38,7 @@ class BacktestSpec:
     position_sizing_mode: str
     lot_size: int
     cash_allocation_pct: float
+    max_open_positions: int
 
 
 @dataclass
@@ -57,9 +59,8 @@ class BacktestService:
         self.strategy_service = StrategyService(session)
 
     def run_backtest(self, payload: BacktestSpec) -> BacktestResultRead:
-        codes = [code.strip().upper() for code in payload.codes if code.strip()]
-        if not codes:
-            raise BacktestServiceError("Please provide at least one stock code.")
+        codes = self._resolve_backtest_codes(payload.codes)
+        payload.codes = codes
 
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
         stocks_by_code, prices_by_code = self._load_backtest_universe(
@@ -76,13 +77,25 @@ class BacktestService:
                 result_payload = self._run_next_open_backtest(payload, stock, prices)
             else:
                 result_payload = self._run_same_close_backtest(payload, stock, prices)
-            result_stock = stock
+            result_stock_id = stock.id
         else:
             if strategy.execution_timing == "next_market_open":
                 result_payload = self._run_next_open_portfolio_backtest(payload, stocks_by_code, prices_by_code)
             else:
                 result_payload = self._run_same_close_portfolio_backtest(payload, stocks_by_code, prices_by_code)
+            result_stock_id = None
+
+        # SQLite can fail to upgrade a long-lived read transaction into a writer
+        # if another connection commits in the meantime. End the read transaction
+        # before we persist the finished backtest result.
+        self.session.rollback()
+
+        if result_stock_id is None:
             result_stock = self._get_or_create_portfolio_stock()
+        else:
+            result_stock = self.session.get(Stock, result_stock_id)
+            if result_stock is None:
+                raise BacktestServiceError("Backtest stock not found while saving the result.")
 
         db_row = self._persist_backtest_result(payload, result_stock, result_payload)
         return self._serialize_backtest_result(db_row)
@@ -202,7 +215,7 @@ class BacktestService:
             "position_sizing_mode": payload.position_sizing_mode,
             "lot_size": payload.lot_size,
             "cash_allocation_pct": payload.cash_allocation_pct,
-            "max_open_positions": self.settings.max_open_positions,
+            "max_open_positions": payload.max_open_positions,
             "portfolio_codes": [],
             "is_portfolio": False,
             "final_equity": round(cash + (quantity * final_close), 2),
@@ -331,7 +344,7 @@ class BacktestService:
             "position_sizing_mode": payload.position_sizing_mode,
             "lot_size": payload.lot_size,
             "cash_allocation_pct": payload.cash_allocation_pct,
-            "max_open_positions": self.settings.max_open_positions,
+            "max_open_positions": payload.max_open_positions,
             "portfolio_codes": [],
             "is_portfolio": False,
             "final_equity": round(cash + (quantity * final_close), 2),
@@ -435,7 +448,7 @@ class BacktestService:
                 positions.pop(code, None)
 
             for evaluation in day_evaluations:
-                if len(positions) >= self.settings.max_open_positions:
+                if len(positions) >= payload.max_open_positions:
                     break
 
                 code = evaluation["code"]
@@ -496,7 +509,7 @@ class BacktestService:
             "position_sizing_mode": payload.position_sizing_mode,
             "lot_size": payload.lot_size,
             "cash_allocation_pct": payload.cash_allocation_pct,
-            "max_open_positions": self.settings.max_open_positions,
+            "max_open_positions": payload.max_open_positions,
             "portfolio_codes": payload.codes,
             "is_portfolio": True,
             "final_equity": final_equity,
@@ -576,7 +589,7 @@ class BacktestService:
                 price = float(order["price"])
                 if order["side"] != "BUY" or code in positions or price <= 0:
                     continue
-                if len(positions) >= self.settings.max_open_positions:
+                if len(positions) >= payload.max_open_positions:
                     break
 
                 try:
@@ -669,7 +682,7 @@ class BacktestService:
             "position_sizing_mode": payload.position_sizing_mode,
             "lot_size": payload.lot_size,
             "cash_allocation_pct": payload.cash_allocation_pct,
-            "max_open_positions": self.settings.max_open_positions,
+            "max_open_positions": payload.max_open_positions,
             "portfolio_codes": payload.codes,
             "is_portfolio": True,
             "final_equity": final_equity,
@@ -774,6 +787,31 @@ class BacktestService:
             prices_by_code[code] = prices
 
         return stocks_by_code, prices_by_code
+
+    def _resolve_backtest_codes(self, codes: list[str]) -> list[str]:
+        normalized = [code.strip().upper() for code in codes if code.strip()]
+        if normalized:
+            return normalized
+
+        default_codes = [
+            stock.code
+            for stock in self.stock_repository.list_active_stocks_by_industries(
+                MarketDataService.DEFAULT_SYNC_POOL_INDUSTRIES
+            )
+            if isinstance(stock.code, str) and stock.code.strip()
+        ]
+        resolved_codes: list[str] = []
+        seen: set[str] = set()
+        for code in default_codes:
+            normalized_code = code.strip().upper()
+            if normalized_code in seen:
+                continue
+            seen.add(normalized_code)
+            resolved_codes.append(normalized_code)
+
+        if not resolved_codes:
+            raise BacktestServiceError("No stock codes were provided and the default backtest list is empty.")
+        return resolved_codes
 
     def _get_or_create_portfolio_stock(self) -> Stock:
         return self.stock_repository.upsert_stock(

@@ -52,6 +52,9 @@ class RealtimeQuoteRead(BaseModel):
     name: str | None = None
     quote_time: datetime
     latest_trade_price: float | None = None
+    latest_trade_price_available: bool = True
+    latest_trade_price_source: str = "realtime"
+    warning_message: str | None = None
     reference_price: float | None = None
     open_price: float | None = None
     high_price: float | None = None

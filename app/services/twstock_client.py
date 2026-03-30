@@ -1,8 +1,7 @@
 from collections import deque
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 from threading import Lock
 from time import monotonic, sleep
-from zoneinfo import ZoneInfo
 
 import requests
 import twstock
@@ -20,22 +19,15 @@ class TwStockClient:
         "上櫃": "OTC",
         "興櫃": "TIB",
     }
-    YAHOO_SYMBOL_SUFFIX = {
-        "TSEC": "TW",
-        "OTC": "TWO",
-        "TIB": "TWO",
-    }
-    YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
     TPEX_HISTORY_URL = "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock"
-    YAHOO_HEADERS = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-    }
-    QUOTE_CACHE_TTL_SECONDS = 10.0
+    QUOTE_CACHE_TTL_SECONDS = 15.0
     REALTIME_LIMIT_WINDOW_SECONDS = 5.0
     REALTIME_LIMIT_MAX_REQUESTS = 3
+    REALTIME_PRICE_RETRY_ATTEMPTS = 4
+    REALTIME_PRICE_RETRY_DELAY_SECONDS = 2.0
 
     _quote_cache: dict[str, tuple[float, RealtimeQuoteRead]] = {}
+    _last_priced_quote_cache: dict[str, RealtimeQuoteRead] = {}
     _quote_cache_lock = Lock()
     _realtime_lock = Lock()
     _realtime_request_times: deque[float] = deque()
@@ -155,42 +147,108 @@ class TwStockClient:
         year_text, month_text, day_text = value.split("/")
         return date(int(year_text) + 1911, int(month_text), int(day_text))
 
-    def get_realtime_quote(self, code: str) -> RealtimeQuoteRead:
-        cached_quote = self._get_cached_quote(code)
-        if cached_quote is not None:
-            return cached_quote
+    def get_realtime_quote(self, code: str, force_refresh: bool = False) -> RealtimeQuoteRead:
+        if not force_refresh:
+            cached_quote = self._get_cached_quote(code)
+            if cached_quote is not None:
+                return cached_quote
 
-        try:
-            self._acquire_twse_slot()
-            payload = twstock.realtime.get(code)
-        except Exception as exc:  # pragma: no cover
-            return self._fallback_quote(code, f"Failed to fetch realtime quote for {code}: {exc}")
+        last_error: str | None = None
+        last_success_payload: tuple[dict, dict] | None = None
+        for attempt in range(self.REALTIME_PRICE_RETRY_ATTEMPTS):
+            try:
+                self._acquire_twse_slot()
+                payload = twstock.realtime.get(code)
+            except Exception as exc:  # pragma: no cover
+                last_error = f"Failed to fetch realtime quote for {code}: {exc}"
+            else:
+                if not payload.get("success"):
+                    last_error = payload.get("rtmessage") or f"Failed to fetch realtime quote for {code}"
+                else:
+                    realtime = payload.get("realtime", {}) or {}
+                    info = payload.get("info", {}) or {}
+                    last_success_payload = (info, realtime)
+                    latest_trade_price = self._to_float(realtime.get("latest_trade_price"))
+                    if latest_trade_price is not None and latest_trade_price > 0:
+                        quote = RealtimeQuoteRead(
+                            code=code,
+                            name=info.get("name"),
+                            quote_time=self._parse_quote_time(info),
+                            latest_trade_price=latest_trade_price,
+                            latest_trade_price_available=True,
+                            latest_trade_price_source="realtime",
+                            reference_price=self._resolve_reference_price(realtime),
+                            open_price=self._to_float(realtime.get("open")),
+                            high_price=self._to_float(realtime.get("high")),
+                            low_price=self._to_float(realtime.get("low")),
+                            accumulate_trade_volume=self._to_int(realtime.get("accumulate_trade_volume")),
+                            best_bid_price=self._to_float_list(realtime.get("best_bid_price")),
+                            best_ask_price=self._to_float_list(realtime.get("best_ask_price")),
+                            best_bid_volume=self._to_int_list(realtime.get("best_bid_volume")),
+                            best_ask_volume=self._to_int_list(realtime.get("best_ask_volume")),
+                        )
+                        self._cache_quote(code, quote)
+                        return quote
 
-        if not payload.get("success"):
-            return self._fallback_quote(
-                code,
-                payload.get("rtmessage") or f"Failed to fetch realtime quote for {code}",
+                    quote_time = info.get("time") or "unknown"
+                    last_error = (
+                        f"Realtime latest trade price is unavailable for {code} "
+                        f"after snapshot {quote_time} (attempt {attempt + 1}/{self.REALTIME_PRICE_RETRY_ATTEMPTS})."
+                    )
+
+            if attempt < self.REALTIME_PRICE_RETRY_ATTEMPTS - 1:
+                sleep(self.REALTIME_PRICE_RETRY_DELAY_SECONDS)
+
+        if last_success_payload is not None:
+            info, realtime = last_success_payload
+            cached_priced_quote = self._get_last_priced_quote(code)
+            if cached_priced_quote is not None and cached_priced_quote.latest_trade_price is not None:
+                quote = RealtimeQuoteRead(
+                    code=code,
+                    name=info.get("name"),
+                    quote_time=self._parse_quote_time(info),
+                    latest_trade_price=cached_priced_quote.latest_trade_price,
+                    latest_trade_price_available=True,
+                    latest_trade_price_source="cache",
+                    warning_message=(
+                        f"{last_error} Using cached latest trade price from "
+                        f"{cached_priced_quote.quote_time.isoformat()}."
+                    ),
+                    reference_price=self._resolve_reference_price(realtime),
+                    open_price=self._to_float(realtime.get("open")),
+                    high_price=self._to_float(realtime.get("high")),
+                    low_price=self._to_float(realtime.get("low")),
+                    accumulate_trade_volume=self._to_int(realtime.get("accumulate_trade_volume")),
+                    best_bid_price=self._to_float_list(realtime.get("best_bid_price")),
+                    best_ask_price=self._to_float_list(realtime.get("best_ask_price")),
+                    best_bid_volume=self._to_int_list(realtime.get("best_bid_volume")),
+                    best_ask_volume=self._to_int_list(realtime.get("best_ask_volume")),
+                )
+                self._cache_quote(code, quote)
+                return quote
+
+            quote = RealtimeQuoteRead(
+                code=code,
+                name=info.get("name"),
+                quote_time=self._parse_quote_time(info),
+                latest_trade_price=None,
+                latest_trade_price_available=False,
+                latest_trade_price_source="unavailable",
+                warning_message=last_error,
+                reference_price=self._resolve_reference_price(realtime),
+                open_price=self._to_float(realtime.get("open")),
+                high_price=self._to_float(realtime.get("high")),
+                low_price=self._to_float(realtime.get("low")),
+                accumulate_trade_volume=self._to_int(realtime.get("accumulate_trade_volume")),
+                best_bid_price=self._to_float_list(realtime.get("best_bid_price")),
+                best_ask_price=self._to_float_list(realtime.get("best_ask_price")),
+                best_bid_volume=self._to_int_list(realtime.get("best_bid_volume")),
+                best_ask_volume=self._to_int_list(realtime.get("best_ask_volume")),
             )
+            self._cache_quote(code, quote)
+            return quote
 
-        realtime = payload.get("realtime", {}) or {}
-        info = payload.get("info", {}) or {}
-        quote = RealtimeQuoteRead(
-            code=code,
-            name=info.get("name"),
-            quote_time=self._parse_quote_time(info),
-            latest_trade_price=self._to_float(realtime.get("latest_trade_price")),
-            reference_price=self._resolve_reference_price(realtime),
-            open_price=self._to_float(realtime.get("open")),
-            high_price=self._to_float(realtime.get("high")),
-            low_price=self._to_float(realtime.get("low")),
-            accumulate_trade_volume=self._to_int(realtime.get("accumulate_trade_volume")),
-            best_bid_price=self._to_float_list(realtime.get("best_bid_price")),
-            best_ask_price=self._to_float_list(realtime.get("best_ask_price")),
-            best_bid_volume=self._to_int_list(realtime.get("best_bid_volume")),
-            best_ask_volume=self._to_int_list(realtime.get("best_ask_volume")),
-        )
-        self._cache_quote(code, quote)
-        return quote
+        raise TwStockClientError(last_error or f"Failed to fetch realtime quote for {code}")
 
     def _parse_quote_time(self, info: dict) -> datetime:
         time_value = info.get("time")
@@ -284,6 +342,12 @@ class TwStockClient:
     def _cache_quote(self, code: str, quote: RealtimeQuoteRead) -> None:
         with self._quote_cache_lock:
             self._quote_cache[code] = (monotonic(), quote)
+            if quote.latest_trade_price is not None and quote.latest_trade_price_source == "realtime":
+                self._last_priced_quote_cache[code] = quote
+
+    def _get_last_priced_quote(self, code: str) -> RealtimeQuoteRead | None:
+        with self._quote_cache_lock:
+            return self._last_priced_quote_cache.get(code)
 
     def _acquire_twse_slot(self) -> None:
         while True:
@@ -324,124 +388,6 @@ class TwStockClient:
                 cursor = date(cursor.year, cursor.month + 1, 1)
 
         return months
-
-    def _fallback_quote(self, code: str, original_error: str) -> RealtimeQuoteRead:
-        for resolver in (self._get_yahoo_quote, self._get_latest_history_quote):
-            try:
-                quote = resolver(code)
-            except TwStockClientError:
-                continue
-
-            self._cache_quote(code, quote)
-            return quote
-
-        raise TwStockClientError(original_error)
-
-    def _get_yahoo_quote(self, code: str) -> RealtimeQuoteRead:
-        metadata = self.get_stock_metadata(code)
-        errors: list[str] = []
-        for symbol in self._candidate_yahoo_symbols(code, metadata.get("market")):
-            try:
-                response = requests.get(
-                    self.YAHOO_CHART_URL.format(symbol=symbol),
-                    params={"interval": "1m", "range": "1d", "includePrePost": "false"},
-                    headers=self.YAHOO_HEADERS,
-                    timeout=10,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                return self._parse_yahoo_quote_payload(code, payload, metadata)
-            except (requests.RequestException, ValueError, TwStockClientError) as exc:
-                errors.append(f"{symbol}: {exc}")
-
-        raise TwStockClientError("; ".join(errors) or f"Failed to fetch Yahoo quote for {code}")
-
-    def _candidate_yahoo_symbols(self, code: str, market: object) -> list[str]:
-        candidates: list[str] = []
-        mapped_suffix = self.YAHOO_SYMBOL_SUFFIX.get(str(market))
-        if mapped_suffix:
-            candidates.append(f"{code}.{mapped_suffix}")
-
-        for suffix in ("TW", "TWO"):
-            symbol = f"{code}.{suffix}"
-            if symbol not in candidates:
-                candidates.append(symbol)
-        return candidates
-
-    def _parse_yahoo_quote_payload(
-        self,
-        code: str,
-        payload: dict,
-        metadata: dict[str, str | bool | None],
-    ) -> RealtimeQuoteRead:
-        chart = payload.get("chart", {}) or {}
-        results = chart.get("result") or []
-        if not results:
-            raise TwStockClientError(chart.get("error", {}).get("description") or "Yahoo quote result is empty")
-
-        result = results[0]
-        meta = result.get("meta", {}) or {}
-        quote_rows = ((result.get("indicators", {}) or {}).get("quote") or [{}])[0]
-        latest_trade_price = self._to_float(meta.get("regularMarketPrice")) or self._last_valid_float(
-            quote_rows.get("close")
-        )
-        reference_price = self._to_float(meta.get("previousClose")) or self._to_float(meta.get("chartPreviousClose"))
-        open_price = self._first_valid_float(quote_rows.get("open"))
-        high_price = self._to_float(meta.get("regularMarketDayHigh")) or self._max_valid_float(quote_rows.get("high"))
-        low_price = self._to_float(meta.get("regularMarketDayLow")) or self._min_valid_float(quote_rows.get("low"))
-        volume = self._to_int(meta.get("regularMarketVolume")) or self._last_valid_int(quote_rows.get("volume"))
-
-        if all(candidate is None for candidate in (latest_trade_price, reference_price, open_price, high_price, low_price)):
-            raise TwStockClientError("Yahoo quote payload does not contain price data")
-
-        market_timestamp = meta.get("regularMarketTime")
-        if market_timestamp:
-            quote_time = datetime.fromtimestamp(market_timestamp, tz=ZoneInfo("Asia/Taipei")).replace(tzinfo=None)
-        else:
-            quote_time = datetime.utcnow()
-
-        name = meta.get("longName") or meta.get("shortName") or metadata.get("name") or code
-        return RealtimeQuoteRead(
-            code=code,
-            name=str(name),
-            quote_time=quote_time,
-            latest_trade_price=latest_trade_price,
-            reference_price=reference_price or latest_trade_price,
-            open_price=open_price,
-            high_price=high_price,
-            low_price=low_price,
-            accumulate_trade_volume=volume,
-            best_bid_price=[],
-            best_ask_price=[],
-            best_bid_volume=[],
-            best_ask_volume=[],
-        )
-
-    def _get_latest_history_quote(self, code: str) -> RealtimeQuoteRead:
-        anchor = date.today().replace(day=1)
-        for _ in range(3):
-            rows = self.get_history(code, anchor.year, anchor.month)
-            if rows:
-                latest = rows[-1]
-                metadata = self.get_stock_metadata(code)
-                return RealtimeQuoteRead(
-                    code=code,
-                    name=str(metadata.get("name") or code),
-                    quote_time=datetime.combine(latest.trade_date, time(hour=13, minute=30)),
-                    latest_trade_price=latest.close_price,
-                    reference_price=latest.close_price,
-                    open_price=latest.open_price,
-                    high_price=latest.high_price,
-                    low_price=latest.low_price,
-                    accumulate_trade_volume=latest.volume,
-                    best_bid_price=[],
-                    best_ask_price=[],
-                    best_bid_volume=[],
-                    best_ask_volume=[],
-                )
-            anchor = (anchor - timedelta(days=1)).replace(day=1)
-
-        raise TwStockClientError(f"No recent historical prices available for {code}")
 
     def _first_valid_float(self, values: object) -> float | None:
         if not values:

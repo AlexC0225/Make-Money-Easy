@@ -32,9 +32,11 @@ class StrategySignalRead(BaseModel):
     strategy_name: str
     stock_code: str
     stock_name: str
+    industry: str | None = None
     signal: str
     signal_reason: str | None = None
     signal_time: datetime
+    created_at: datetime | None = None
     snapshot: dict
     execution: StrategyExecutionRead | None = None
 
@@ -102,7 +104,7 @@ class BacktestResultRead(BaseModel):
 
 
 class BacktestRunRequest(BaseModel):
-    code: str = Field(min_length=1)
+    code: str = Field(default="")
     strategy_name: str = Field(min_length=1)
     start_date: date
     end_date: date
@@ -110,6 +112,7 @@ class BacktestRunRequest(BaseModel):
     position_sizing_mode: Literal["fixed_shares", "cash_percent"] = POSITION_SIZING_FIXED_SHARES
     lot_size: int = Field(default=1000, gt=0)
     cash_allocation_pct: float = Field(default=10.0, gt=0, le=100)
+    max_open_positions: int = Field(default_factory=lambda: get_settings().max_open_positions, gt=0)
 
     @model_validator(mode="after")
     def validate_dates(self):

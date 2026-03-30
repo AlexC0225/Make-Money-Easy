@@ -1,12 +1,13 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.core.enums import OrderSide
 from app.db.models.order import Trade
 from app.db.models.portfolio import Position
+from app.db.models.stock import Stock
 from app.db.models.strategy import StrategyRun
 from app.db.repositories.stock_repository import StockRepository
 from app.schemas.strategy import StrategyDefinitionRead, StrategyExecutionRead, StrategySignalRead
@@ -126,41 +127,48 @@ class StrategyService:
             }
             self.session.flush()
 
-        return StrategySignalRead(
-            id=strategy_run.id,
-            strategy_name=strategy_run.strategy_name,
-            stock_code=stock.code,
-            stock_name=stock.name,
-            signal=strategy_run.signal,
-            signal_reason=strategy_run.signal_reason,
-            signal_time=strategy_run.signal_time,
-            snapshot=strategy_run.snapshot_json,
-            execution=execution,
-        )
+        self.session.refresh(strategy_run)
+        return self._serialize_signal_run(strategy_run, execution=execution)
 
-    def list_signals(self, strategy_name: str | None = None, limit: int = 20) -> list[StrategySignalRead]:
-        statement = select(StrategyRun).options(selectinload(StrategyRun.stock)).order_by(
+    def list_signals(
+        self,
+        strategy_name: str | None = None,
+        limit: int | None = None,
+        latest_only: bool = False,
+        industry: str | None = None,
+    ) -> list[StrategySignalRead]:
+        statement = select(StrategyRun).join(Stock, StrategyRun.stock_id == Stock.id).options(selectinload(StrategyRun.stock)).order_by(
             StrategyRun.signal_time.desc(),
             StrategyRun.id.desc(),
         )
         if strategy_name:
             statement = statement.where(StrategyRun.strategy_name == strategy_name)
-        statement = statement.limit(limit)
+        normalized_industry = industry.strip() if industry else None
+        if normalized_industry:
+            statement = statement.where(
+                Stock.industry.is_not(None),
+                func.trim(Stock.industry) == normalized_industry,
+            )
 
         rows = list(self.session.scalars(statement))
-        return [
-            StrategySignalRead(
-                id=row.id,
-                strategy_name=row.strategy_name,
-                stock_code=row.stock.code,
-                stock_name=row.stock.name,
-                signal=row.signal,
-                signal_reason=row.signal_reason,
-                signal_time=row.signal_time,
-                snapshot=row.snapshot_json,
-            )
-            for row in rows
-        ]
+        if latest_only:
+            latest_rows: list[StrategyRun] = []
+            seen_keys: set[tuple[str, int]] = set()
+            for row in rows:
+                key = (row.strategy_name, row.stock_id)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                latest_rows.append(row)
+            rows = latest_rows
+
+        effective_limit = limit
+        if effective_limit is None and not latest_only:
+            effective_limit = 200
+        if effective_limit is not None:
+            rows = rows[:effective_limit]
+
+        return [self._serialize_signal_run(row) for row in rows]
 
     def evaluate_strategy(
         self,
@@ -274,7 +282,7 @@ class StrategyService:
                 code=code,
                 quantity=quantity,
                 side=OrderSide.buy if signal.signal == "BUY" else OrderSide.sell,
-                enforce_round_lot=signal.signal == "BUY",
+                enforce_round_lot=signal.signal == "BUY" and position_sizing_mode == POSITION_SIZING_FIXED_SHARES,
             )
             return StrategyExecutionRead(
                 applied=True,
@@ -319,6 +327,25 @@ class StrategyService:
             "entry_price": position.avg_cost,
             "entry_date": entry_date,
         }
+
+    @staticmethod
+    def _serialize_signal_run(
+        row: StrategyRun,
+        execution: StrategyExecutionRead | None = None,
+    ) -> StrategySignalRead:
+        return StrategySignalRead(
+            id=row.id,
+            strategy_name=row.strategy_name,
+            stock_code=row.stock.code,
+            stock_name=row.stock.name,
+            industry=row.stock.industry,
+            signal=row.signal,
+            signal_reason=row.signal_reason,
+            signal_time=row.signal_time,
+            created_at=row.created_at,
+            snapshot=row.snapshot_json,
+            execution=execution,
+        )
 
     def _get_position(self, user_id: int, code: str) -> Position | None:
         stock = self.stock_repository.get_by_code(code)
