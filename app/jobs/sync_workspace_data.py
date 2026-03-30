@@ -39,7 +39,6 @@ def run_close_sync_workspace_data_job() -> dict[str, object]:
             year=now.year,
             month=now.month,
         )
-        session.commit()
         result = {
             "skipped": False,
             "year": now.year,

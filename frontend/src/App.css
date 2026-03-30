@@ -510,6 +510,12 @@ body {
   animation: sync-progress-slide 1.8s ease-in-out infinite;
 }
 
+.setup-progress-bar--determinate span {
+  width: 0;
+  animation: none;
+  transition: width 0.35s ease;
+}
+
 .setup-progress-meta {
   display: flex;
   flex-wrap: wrap;

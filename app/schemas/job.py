@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -16,6 +18,7 @@ class HistorySyncRequest(BaseModel):
     user_id: int | None = Field(default=None, ge=1)
     year: int = Field(ge=1990, le=2100)
     month: int = Field(ge=1, le=12)
+    run_id: str | None = None
 
 
 class HistoryRangeSyncRequest(BaseModel):
@@ -23,6 +26,7 @@ class HistoryRangeSyncRequest(BaseModel):
     user_id: int | None = Field(default=None, ge=1)
     start_date: str
     end_date: str
+    run_id: str | None = None
 
 
 class SyncTargetPreviewResponse(BaseModel):
@@ -50,3 +54,18 @@ class HistoryRangeSyncResponse(SyncTargetPreviewResponse):
     synced_codes: int
     synced_rows: int
     failed_codes: list[str]
+
+
+class SyncProgressResponse(BaseModel):
+    run_id: str
+    job_name: str
+    status: str
+    total_codes: int
+    completed_codes: int
+    synced_codes: int
+    synced_rows: int
+    failed_codes: list[str] = Field(default_factory=list)
+    current_code: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    error_message: str | None = None

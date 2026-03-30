@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
@@ -35,6 +37,44 @@ def test_sync_history_batch_job(client):
     assert payload["synced_codes"] == 2
     assert payload["synced_rows"] == 2
     assert payload["failed_codes"] == []
+
+
+def test_sync_progress_returns_completed_state_after_history_range_sync(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    run_id = "sync-progress-range"
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330", "2454"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+            "run_id": run_id,
+        },
+    )
+
+    assert response.status_code == 200
+
+    progress_response = client.get(f"/api/v1/jobs/sync/progress/{run_id}")
+    assert progress_response.status_code == 200
+    progress_payload = progress_response.json()
+    assert progress_payload["status"] == "completed"
+    assert progress_payload["job_name"] == "sync-history-range"
+    assert progress_payload["total_codes"] == 2
+    assert progress_payload["completed_codes"] == 2
+    assert progress_payload["synced_codes"] == 2
+    assert progress_payload["synced_rows"] == 6
+    assert progress_payload["failed_codes"] == []
+    assert progress_payload["current_code"] is None
+    assert progress_payload["started_at"] is not None
+    assert progress_payload["finished_at"] is not None
+
+
+def test_sync_progress_returns_404_for_unknown_run_id(client):
+    response = client.get("/api/v1/jobs/sync/progress/missing-run-id")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Sync progress not found."
 
 
 def test_sync_targets_default_to_watchlist_plus_default_pool(client):
@@ -203,10 +243,48 @@ def test_sync_history_range_isolates_failed_code_writes(client, monkeypatch):
         session.close()
 
 
+def test_sync_history_range_commits_each_code_without_outer_commit(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+    original_sync_history_range = MarketDataService.sync_history_range
+
+    def flaky_sync_history_range(self, code, start_date, end_date):
+        if code == "2454":
+            raise RuntimeError("upstream error")
+        return original_sync_history_range(self, code, start_date, end_date)
+
+    monkeypatch.setattr(
+        "app.services.market_data_service.MarketDataService.sync_history_range",
+        flaky_sync_history_range,
+    )
+
+    session = get_session_factory()()
+    try:
+        service = MarketDataService(session, FakeTwStockClient())
+        _, synced_codes, synced_rows, failed_codes = service.sync_history_range_batch(
+            codes=["2330", "2454"],
+            start_date=date(2026, 3, 24),
+            end_date=date(2026, 3, 26),
+        )
+
+        assert synced_codes == 1
+        assert synced_rows == 3
+        assert failed_codes == ["2454"]
+    finally:
+        session.close()
+
+    verification_session = get_session_factory()()
+    try:
+        stock = verification_session.execute(select(Stock).where(Stock.code == "2330")).scalar_one()
+        prices = stock.daily_prices
+        assert len(prices) == 3
+    finally:
+        verification_session.close()
+
+
 def test_sync_history_range_returns_503_when_database_is_busy(client, monkeypatch):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
 
-    def raise_locked_error(self, codes, start_date, end_date, user_id=None):
+    def raise_locked_error(self, codes, start_date, end_date, user_id=None, progress_run_id=None):
         raise OperationalError("UPDATE daily_prices ...", {}, Exception("database is locked"))
 
     monkeypatch.setattr(

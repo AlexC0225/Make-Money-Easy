@@ -15,7 +15,6 @@ def run_sync_history_job(codes: list[str], year: int, month: int) -> dict[str, o
             year=year,
             month=month,
         )
-        session.commit()
         return {
             "synced_codes": synced_codes,
             "synced_rows": synced_rows,
@@ -37,7 +36,6 @@ def run_sync_current_month_history_job(limit: int | None = None) -> dict[str, ob
             year=now.year,
             month=now.month,
         )
-        session.commit()
         return {
             "year": now.year,
             "month": now.month,

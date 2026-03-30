@@ -23,6 +23,7 @@ import type {
   StrategyDefinition,
   StrategyRunPayload,
   StrategySignal,
+  SyncProgress,
   SyncTargetPreview,
   UserProfile,
   WatchlistItem,
@@ -91,12 +92,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  syncStocks: () =>
-    request<StockUniverseSyncResult>('/jobs/sync/stocks', { method: 'POST' }),
+  syncStocks: (runId?: string) =>
+    request<StockUniverseSyncResult>('/jobs/sync/stocks', {
+      method: 'POST',
+      params: { run_id: runId },
+    }),
   getSyncTargets: (userId?: number) =>
     request<SyncTargetPreview>('/jobs/sync/targets', {
       params: { user_id: userId },
     }),
+  getSyncProgress: (runId: string) =>
+    request<SyncProgress>(`/jobs/sync/progress/${runId}`),
   syncHistoryRange: (payload: HistoryRangeSyncPayload) =>
     request<HistoryRangeSyncResult>('/jobs/sync/history-range', {
       method: 'POST',

@@ -284,6 +284,7 @@ export type HistoryRangeSyncPayload = {
   user_id?: number
   start_date: string
   end_date: string
+  run_id?: string
 }
 
 export type SyncTargetPreview = {
@@ -307,6 +308,21 @@ export type SyncTargetPreview = {
 
 export type StockUniverseSyncResult = {
   synced_count: number
+}
+
+export type SyncProgress = {
+  run_id: string
+  job_name: string
+  status: 'running' | 'completed' | 'failed'
+  total_codes: number
+  completed_codes: number
+  synced_codes: number
+  synced_rows: number
+  failed_codes: string[]
+  current_code?: string | null
+  started_at: string
+  finished_at?: string | null
+  error_message?: string | null
 }
 
 export type HistoryRangeSyncResult = SyncTargetPreview & {

@@ -1,5 +1,5 @@
-import { startTransition, useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+﻿import { startTransition, useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, LoaderCircle, RefreshCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -42,31 +42,43 @@ function formatElapsedTime(totalSeconds: number) {
   const seconds = totalSeconds % 60
 
   if (minutes <= 0) {
-    return `${seconds} 秒`
+    return `${seconds}s`
   }
 
-  return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
 function getProgressHint(totalSeconds: number) {
   if (totalSeconds < 6) {
-    return '已送出請求，正在整理同步目標與檢查條件。'
+    return 'Request sent. Preparing the sync target list and validating the request.'
   }
 
   if (totalSeconds < 16) {
-    return '伺服器正在抓取遠端資料，依股票數量與日期區間不同，等待時間可能略有差異。'
+    return 'The server is fetching upstream data and writing each completed symbol to the database.'
   }
 
-  return '目前多半正在寫入與整理資料庫，請先不要重複送出同步請求。'
+  return 'The sync is still running. Completed symbols are already being committed as the batch progresses.'
+}
+
+function createSyncRunId(prefix: string) {
+  const randomId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  return `${prefix}-${randomId}`
 }
 
 export function SetupPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [activeUserId, setActiveUserIdState] = useState<number | null>(() => getActiveUserId())
   const hydrated = useRef(false)
   const clearedInvalidWorkspace = useRef(false)
+  const syncStartedAtRef = useRef<number | null>(null)
   const [positions, setPositions] = useState<ManualPositionInput[]>([])
   const [overrideCodes, setOverrideCodes] = useState('')
+  const [activeSyncRunId, setActiveSyncRunId] = useState<string | null>(null)
   const [syncElapsedSeconds, setSyncElapsedSeconds] = useState(0)
   const [rangeStart, setRangeStart] = useState(() => {
     const start = new Date()
@@ -144,15 +156,21 @@ export function SetupPage() {
     },
   })
 
-  const syncStocksMutation = useMutation({ mutationFn: api.syncStocks })
+  const syncStocksMutation = useMutation({
+    mutationFn: (runId: string) => api.syncStocks(runId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['sync-targets', activeUserId] })
+    },
+  })
 
   const syncHistoryRangeMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (runId: string) =>
       api.syncHistoryRange({
         user_id: activeUserId ?? undefined,
         codes: manualOverrideCodes,
         start_date: rangeStart,
         end_date: rangeEnd,
+        run_id: runId,
       }),
   })
 
@@ -171,6 +189,7 @@ export function SetupPage() {
     hydrated.current = false
     setPositions([])
     setOverrideCodes('')
+    setActiveSyncRunId(null)
     setForm({
       username: '',
       email: '',
@@ -195,33 +214,98 @@ export function SetupPage() {
 
   const previewCodes = manualOverrideCodes ?? syncTargetsQuery.data?.codes ?? []
   const isSyncBusy = syncStocksMutation.isPending || syncHistoryRangeMutation.isPending
+
+  const syncProgressQuery = useQuery({
+    queryKey: ['sync-progress', activeSyncRunId],
+    queryFn: () => api.getSyncProgress(activeSyncRunId!),
+    enabled: activeSyncRunId !== null,
+    retry: false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: isSyncBusy && activeSyncRunId ? 1000 : false,
+    refetchIntervalInBackground: true,
+  })
+
   const syncTargetCount = previewCodes.length || syncTargetsQuery.data?.codes.length || 0
   const syncSelectionMode = manualOverrideCodes ? 'custom' : 'default'
-  const syncProgressTitle = syncStocksMutation.isPending ? '正在更新股票主檔' : '正在同步指定區間'
+  const syncProgressTitle = syncStocksMutation.isPending ? 'Updating stock universe' : 'Syncing history range'
   const syncProgressSummary = syncStocksMutation.isPending
-    ? `正在更新股票主檔與預設同步池，完成後會套用到目前 ${syncTargetsQuery.data?.codes.length ?? 0} 檔預設同步股票。`
-    : `正在同步 ${syncTargetCount} 檔股票，區間為 ${rangeStart} 至 ${rangeEnd}。`
+    ? `Refreshing the stock master and default pool. The latest target count is ${syncTargetsQuery.data?.codes.length ?? 0}.`
+    : `Syncing ${syncTargetCount} symbols for ${rangeStart} to ${rangeEnd}.`
   const failedRangeCodes = syncHistoryRangeMutation.data?.failed_codes ?? []
   const syncedRangeCodes = syncHistoryRangeMutation.data?.codes ?? []
   const syncedRangeSelectionLabel =
-    syncHistoryRangeMutation.data?.selection_mode === 'custom' ? '手動指定' : '預設同步池'
+    syncHistoryRangeMutation.data?.selection_mode === 'custom' ? 'Manual list' : 'Default pool'
   const syncedRangeCodeSummary =
     syncedRangeCodes.length > 8
-      ? `${syncedRangeCodes.slice(0, 8).join(', ')} 等 ${syncedRangeCodes.length} 檔`
+      ? `${syncedRangeCodes.slice(0, 8).join(', ')} and ${syncedRangeCodes.length - 8} more`
       : syncedRangeCodes.join(', ')
+
+  const syncProgress = syncProgressQuery.data
+  const syncProgressTotal =
+    syncProgress?.total_codes ?? (syncHistoryRangeMutation.isPending ? syncTargetCount : 0)
+  const syncProgressCompleted = syncProgress?.completed_codes ?? 0
+  const syncProgressSuccessful = syncProgress?.synced_codes ?? 0
+  const syncProgressFailed = syncProgress?.failed_codes.length ?? 0
+  const syncProgressPercent =
+    syncProgressTotal > 0 ? Math.round((syncProgressCompleted / syncProgressTotal) * 100) : undefined
+  const syncProgressSummaryText =
+    syncProgressTotal > 0 ? `${syncProgressCompleted} / ${syncProgressTotal}` : 'Preparing...'
+  const syncProgressCaption = syncProgress?.current_code
+    ? `Now syncing ${syncProgress.current_code}. Completed ${syncProgressSummaryText}.`
+    : getProgressHint(syncElapsedSeconds)
+
+  const startSyncStocks = () => {
+    const runId = createSyncRunId('sync-stocks')
+    setActiveSyncRunId(runId)
+    syncStocksMutation.mutate(runId, {
+      onSettled: () => {
+        setActiveSyncRunId((current) => (current === runId ? null : current))
+      },
+    })
+  }
+
+  const startSyncHistoryRange = () => {
+    const runId = createSyncRunId('sync-history-range')
+    setActiveSyncRunId(runId)
+    syncHistoryRangeMutation.mutate(runId, {
+      onSettled: () => {
+        setActiveSyncRunId((current) => (current === runId ? null : current))
+      },
+    })
+  }
 
   useEffect(() => {
     if (!isSyncBusy) {
+      syncStartedAtRef.current = null
       setSyncElapsedSeconds(0)
       return
     }
 
-    setSyncElapsedSeconds(0)
+    const startedAt = syncStartedAtRef.current ?? Date.now()
+    syncStartedAtRef.current = startedAt
+
+    const updateElapsedSeconds = () => {
+      setSyncElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+    }
+
+    updateElapsedSeconds()
     const timer = window.setInterval(() => {
-      setSyncElapsedSeconds((current) => current + 1)
+      updateElapsedSeconds()
     }, 1000)
 
-    return () => window.clearInterval(timer)
+    const handleVisibilityOrFocus = () => {
+      updateElapsedSeconds()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus)
+    window.addEventListener('focus', handleVisibilityOrFocus)
+
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
+      window.removeEventListener('focus', handleVisibilityOrFocus)
+    }
   }, [isSyncBusy])
 
   return (
@@ -230,64 +314,64 @@ export function SetupPage() {
         <div className="setup-hero-layout">
           <div className="setup-hero-copy">
             <p className="hero-kicker">Workspace Setup</p>
-            <h2>設定工作區與同步範圍</h2>
-            <p>工作區設定只保留資產、持倉與資料同步三件事，讓日常維護更單純。</p>
+            <h2>Prepare your workspace and market sync</h2>
+            <p>Keep the portfolio workspace, manual positions, and market-data sync controls in one place.</p>
           </div>
 
           <div className="setup-hero-highlights">
             <article className="setup-highlight-card">
-              <span>可用現金</span>
+              <span>Available Cash</span>
               <strong>{formatCurrency(form.available_cash)}</strong>
-              <p>會作為目前工作區的帳戶基礎。</p>
+              <p>Used as the current workspace cash balance.</p>
             </article>
             <article className="setup-highlight-card">
-              <span>已設定持倉</span>
+              <span>Configured Positions</span>
               <strong>{configuredPositions}</strong>
-              <p>建立完成後會同步寫進投資組合。</p>
+              <p>Positions entered here are reused in the workspace.</p>
             </article>
             <article className="setup-highlight-card">
-              <span>預設同步股票</span>
+              <span>Sync Targets</span>
               <strong>{syncTargetsQuery.data?.codes.length ?? 0}</strong>
-              <p>預設來自自選關注清單與科技、金融產業股票池。</p>
+              <p>Preview of the current default sync universe.</p>
             </article>
           </div>
         </div>
       </section>
 
       <Panel
-        title="工作區設定"
-        subtitle="Workspace"
+        title="Workspace"
+        subtitle="Setup"
         action={
           activeUserId ? (
             <button className="ghost-button" type="button" onClick={resetWorkspace}>
               <RefreshCcw size={16} />
-              清除工作區
+              Reset Workspace
             </button>
           ) : null
         }
       >
         <div className="setup-summary-grid">
           <article className="setup-summary-card">
-            <span>工作區狀態</span>
-            <strong>{activeUserId ? '已啟用' : '尚未建立'}</strong>
-            <p>{activeUserId ? '目前可以直接維護持倉與同步資料。' : '先建立工作區，後續頁面才會有完整資料。'}</p>
+            <span>Status</span>
+            <strong>{activeUserId ? 'Workspace ready' : 'Create a workspace'}</strong>
+            <p>{activeUserId ? 'Continue editing the active workspace.' : 'Create the first workspace to unlock sync tools.'}</p>
           </article>
           <article className="setup-summary-card">
-            <span>初始資金</span>
+            <span>Initial Cash</span>
             <strong>{formatCurrency(form.initial_cash)}</strong>
-            <p>可作為帳戶基準與後續績效參考。</p>
+            <p>Baseline cash for the account snapshot.</p>
           </article>
           <article className="setup-summary-card">
-            <span>同步預覽</span>
-            <strong>{previewCodes.length} 檔</strong>
-            <p>{manualOverrideCodes ? '這次同步會改用你手動指定的股票。' : '未指定代碼時，會沿用預設同步股票池。'}</p>
+            <span>Current Sync Scope</span>
+            <strong>{previewCodes.length}</strong>
+            <p>{manualOverrideCodes ? 'Manual codes are overriding the default pool.' : 'The default pool will be used for sync.'}</p>
           </article>
         </div>
 
         <form className="setup-form" onSubmit={handleSubmit}>
           <div className="form-grid">
             <label>
-              使用者名稱
+              Username
               <input
                 value={form.username}
                 onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
@@ -306,7 +390,7 @@ export function SetupPage() {
               />
             </label>
             <label>
-              初始資金
+              Initial Cash
               <input
                 type="number"
                 min={1}
@@ -318,7 +402,7 @@ export function SetupPage() {
               />
             </label>
             <label>
-              可用現金
+              Available Cash
               <input
                 type="number"
                 min={0}
@@ -334,10 +418,10 @@ export function SetupPage() {
           <div className="setup-subsection">
             <div className="setup-subsection-head">
               <div>
-                <h3>持倉設定</h3>
-                <p>把你已經持有的股票與成本放在這裡，後續工作臺和投資組合會直接沿用。</p>
+                <h3>Manual Positions</h3>
+                <p>Enter any positions that should be stored as part of the workspace snapshot.</p>
               </div>
-              <span className="setup-badge">{configuredPositions} 檔</span>
+              <span className="setup-badge">{configuredPositions}</span>
             </div>
             <PositionEditor positions={positions} onChange={setPositions} />
           </div>
@@ -347,16 +431,16 @@ export function SetupPage() {
           <div className="inline-actions">
             <button className="primary-button" type="submit" disabled={bootstrapMutation.isPending}>
               <ArrowRight size={16} />
-              {activeUserId ? '更新工作區' : '建立工作區'}
+              {activeUserId ? 'Update Workspace' : 'Create Workspace'}
             </button>
             <button className="ghost-button" type="button" onClick={() => setPositions((current) => [...current, emptyPosition])}>
-              新增持倉
+              Add Position
             </button>
           </div>
         </form>
       </Panel>
 
-      <Panel title="資料同步" subtitle="Data Sync">
+      <Panel title="Data Sync" subtitle="Market Data">
         <div className="stack-form">
           {isSyncBusy ? (
             <div className="setup-progress-card" aria-live="polite">
@@ -367,66 +451,71 @@ export function SetupPage() {
                 </div>
                 <span className="setup-progress-badge">
                   <LoaderCircle className="spinning-icon" size={14} />
-                  處理中
+                  Running
                 </span>
               </div>
 
               <p className="muted-text">{syncProgressSummary}</p>
 
-              <div className="setup-progress-bar" aria-hidden="true">
-                <span />
+              <div
+                className={`setup-progress-bar ${syncProgressPercent !== undefined ? 'setup-progress-bar--determinate' : ''}`}
+                aria-hidden="true"
+              >
+                <span style={syncProgressPercent !== undefined ? { width: `${syncProgressPercent}%` } : undefined} />
               </div>
 
               <div className="setup-progress-meta">
-                <span>已等待 {formatElapsedTime(syncElapsedSeconds)}</span>
-                <span>{syncTargetCount} 檔股票</span>
+                <span>Elapsed {formatElapsedTime(syncElapsedSeconds)}</span>
+                <span>Completed {syncProgressSummaryText}</span>
+                <span>Success {syncProgressSuccessful}</span>
+                <span>Failed {syncProgressFailed}</span>
               </div>
 
-              <p className="setup-progress-caption">{getProgressHint(syncElapsedSeconds)}</p>
+              <p className="setup-progress-caption">{syncProgressCaption}</p>
             </div>
           ) : null}
 
           <div className="setup-sync-card setup-sync-card--feature">
             <div className="setup-sync-header">
               <div>
-                <h3>同步規則總覽</h3>
+                <h3>Sync Universe Overview</h3>
                 <p className="muted-text">
-                  沒有填入股票代碼時，會使用預設同步池；只要填入代碼，這次同步就只處理你指定的股票。
+                  Review the current watchlist, default pool, and the effective scope that will be synced.
                 </p>
               </div>
               <span className={`setup-mode-pill ${syncSelectionMode === 'custom' ? 'setup-mode-pill--custom' : ''}`}>
-                {syncSelectionMode === 'custom' ? '手動指定' : '預設同步池'}
+                {syncSelectionMode === 'custom' ? 'Manual' : 'Default'}
               </span>
             </div>
 
             <div className="setup-summary-grid">
               <article className="setup-summary-card">
-                <span>自選股票</span>
+                <span>Watchlist</span>
                 <strong>{syncTargetsQuery.data?.watchlist_codes.length ?? 0}</strong>
-                <p>來自關注清單頁的自選股票。</p>
+                <p>Symbols coming from the active watchlist.</p>
               </article>
               <article className="setup-summary-card">
-                <span>預設股票池</span>
+                <span>Default Pool</span>
                 <strong>{syncTargetsQuery.data?.default_pool_codes.length ?? 0}</strong>
-                <p>來自 stocks 表的科技與金融產業篩選。</p>
+                <p>Symbols coming from the default universe filter.</p>
               </article>
               <article className="setup-summary-card">
-                <span>本次同步</span>
+                <span>Effective Scope</span>
                 <strong>{syncTargetCount}</strong>
-                <p>{manualOverrideCodes ? '已切換成手動指定代碼。' : '未指定代碼時會使用預設同步池。'}</p>
+                <p>{manualOverrideCodes ? 'Manual codes are in effect for this run.' : 'The default pool will be synced.'}</p>
               </article>
             </div>
 
             <div className="setup-sync-overview">
               <div className="setup-chip-panel">
                 <div className="setup-chip-panel-head">
-                  <strong>{manualOverrideCodes ? '本次實際會同步的股票' : '預設同步股票池'}</strong>
-                  <span>{syncTargetCount} 檔</span>
+                  <strong>{manualOverrideCodes ? 'Manual codes for this run' : 'Default sync preview'}</strong>
+                  <span>{syncTargetCount}</span>
                 </div>
                 <p className="setup-chip-panel-note">
                   {manualOverrideCodes
-                    ? '這次會忽略預設同步池，只針對下方輸入的代碼同步歷史資料。'
-                    : '預設會合併自選關注清單與科技、金融產業股票池，重複股票只會處理一次。'}
+                    ? 'Only the codes entered below will be synced in this run.'
+                    : 'The preview combines watchlist symbols and the current default pool.'}
                 </p>
 
                 {previewCodes.length > 0 ? (
@@ -438,20 +527,20 @@ export function SetupPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="muted-text">目前還沒有可同步的股票，請先更新股票主檔或檢查來源設定。</p>
+                  <p className="muted-text">No sync targets are available yet. Refresh the stock universe first.</p>
                 )}
               </div>
 
               <div className="setup-action-stack">
                 <div className="setup-meta-row">
-                  <span>預設池 {syncTargetsQuery.data?.default_pool_codes.length ?? 0} 檔</span>
-                  <span>產業 {syncTargetsQuery.data?.default_pool_industries.length ?? 0} 類</span>
+                  <span>Default pool {syncTargetsQuery.data?.default_pool_codes.length ?? 0}</span>
+                  <span>Industries {syncTargetsQuery.data?.default_pool_industries.length ?? 0}</span>
                 </div>
-                <button className="ghost-button" type="button" onClick={() => syncStocksMutation.mutate()} disabled={isSyncBusy}>
-                  {syncStocksMutation.isPending ? '更新中...' : '更新股票主檔'}
+                <button className="ghost-button" type="button" onClick={startSyncStocks} disabled={isSyncBusy}>
+                  {syncStocksMutation.isPending ? 'Updating...' : 'Refresh Stock Universe'}
                 </button>
                 <p className="muted-text">
-                  更新股票主檔後，預設同步池會重新依 `stocks` 表中的產業欄位篩出科技與金融股。
+                  Refreshing the stock universe updates the default sync pool used by future runs.
                 </p>
               </div>
             </div>
@@ -459,17 +548,17 @@ export function SetupPage() {
 
           <div className="setup-sync-grid">
             <div className="setup-sync-card">
-              <h3>本次同步指定代碼</h3>
+              <h3>Manual Codes</h3>
               <label>
-                只同步這些股票
+                Override symbols
                 <input
                   value={overrideCodes}
                   disabled={isSyncBusy}
                   onChange={(event) => setOverrideCodes(event.target.value)}
-                  placeholder="例如：2330, 2317, 2454"
+                  placeholder="2330, 2317, 2454"
                 />
               </label>
-              <p className="muted-text">支援逗號、空白或換行分隔。只要有填入代碼，這次同步就不會使用預設同步池。</p>
+              <p className="muted-text">Separate symbols with spaces or commas. Leave blank to use the default pool.</p>
               <div className="inline-actions">
                 <button
                   className="ghost-button"
@@ -477,54 +566,55 @@ export function SetupPage() {
                   onClick={() => setOverrideCodes('')}
                   disabled={isSyncBusy || !overrideCodes.trim()}
                 >
-                  清除指定代碼
+                  Clear
                 </button>
               </div>
             </div>
 
             <div className="setup-sync-card">
-              <h3>同步前提醒</h3>
-              <p className="muted-text">如果你要跑完整預設池，這裡保持空白即可。若只想補幾檔股票歷史資料，再填入代碼就好。</p>
+              <h3>Sync Plan</h3>
+              <p className="muted-text">Use the cards below to confirm the current mode and the estimated batch size.</p>
               <div className="setup-summary-grid setup-summary-grid--compact">
                 <article className="setup-summary-card">
-                  <span>同步模式</span>
-                  <strong>{syncSelectionMode === 'custom' ? '手動指定' : '預設池'}</strong>
-                  <p>{syncSelectionMode === 'custom' ? '只同步輸入代碼。' : '同步關注清單加科技、金融產業股票池。'}</p>
+                  <span>Mode</span>
+                  <strong>{syncSelectionMode === 'custom' ? 'Manual' : 'Default'}</strong>
+                  <p>{syncSelectionMode === 'custom' ? 'Sync only the entered codes.' : 'Sync the combined default pool.'}</p>
                 </article>
                 <article className="setup-summary-card">
-                  <span>同步檔數</span>
+                  <span>Symbols</span>
                   <strong>{syncTargetCount}</strong>
-                  <p>目前依畫面設定估算的本次同步目標。</p>
+                  <p>Estimated symbol count for the next run.</p>
                 </article>
               </div>
             </div>
 
             <div className="setup-sync-card setup-sync-card--wide setup-sync-card--accent">
-              <h3>同步指定區間</h3>
+              <h3>History Range</h3>
               <div className="form-grid">
                 <label>
-                  開始日期
+                  Start date
                   <input type="date" value={rangeStart} disabled={isSyncBusy} onChange={(event) => setRangeStart(event.target.value)} />
                 </label>
                 <label>
-                  結束日期
+                  End date
                   <input type="date" value={rangeEnd} disabled={isSyncBusy} onChange={(event) => setRangeEnd(event.target.value)} />
                 </label>
               </div>
-              <button className="primary-button" type="button" onClick={() => syncHistoryRangeMutation.mutate()} disabled={isSyncBusy}>
-                {syncHistoryRangeMutation.isPending ? '同步中...' : '同步區間資料'}
+              <button className="primary-button" type="button" onClick={startSyncHistoryRange} disabled={isSyncBusy}>
+                {syncHistoryRangeMutation.isPending ? 'Syncing...' : 'Sync History Range'}
               </button>
             </div>
           </div>
 
           {syncTargetsQuery.error ? <p className="error-text">{syncTargetsQuery.error.message}</p> : null}
-          {syncStocksMutation.data ? <p className="success-text">已更新 {syncStocksMutation.data.synced_count} 檔股票主檔。</p> : null}
+          {syncStocksMutation.data ? <p className="success-text">Stock universe refreshed: {syncStocksMutation.data.synced_count} symbols.</p> : null}
           {syncHistoryRangeMutation.data ? (
             <p className="success-text">
-              已同步 {syncHistoryRangeMutation.data.synced_rows} 筆區間資料，涵蓋 {syncHistoryRangeMutation.data.synced_codes} 檔股票。模式：{syncedRangeSelectionLabel}；實際同步代碼：{syncedRangeCodeSummary}。
+              Synced {syncHistoryRangeMutation.data.synced_rows} rows across {syncHistoryRangeMutation.data.synced_codes} symbols.
+              Mode: {syncedRangeSelectionLabel}. Symbols: {syncedRangeCodeSummary || 'n/a'}.
             </p>
           ) : null}
-          {failedRangeCodes.length > 0 ? <p className="error-text">同步失敗的股票：{failedRangeCodes.join(', ')}</p> : null}
+          {failedRangeCodes.length > 0 ? <p className="error-text">Failed symbols: {failedRangeCodes.join(', ')}</p> : null}
           {syncStocksMutation.error ? <p className="error-text">{syncStocksMutation.error.message}</p> : null}
           {syncHistoryRangeMutation.error ? <p className="error-text">{syncHistoryRangeMutation.error.message}</p> : null}
         </div>

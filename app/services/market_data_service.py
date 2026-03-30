@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.db.models.stock import Stock
 from app.db.models.watchlist import WatchlistItem
 from app.db.repositories.stock_repository import StockRepository
+from app.services.sync_progress_service import SyncProgressService
 from app.services.twstock_client import TwStockClient
 
 
@@ -55,14 +56,37 @@ class MarketDataService:
         self.session = session
         self.twstock_client = twstock_client
         self.stock_repository = StockRepository(session)
+        self.sync_progress_service = SyncProgressService()
 
-    def sync_stock_universe(self) -> int:
+    def sync_stock_universe(self, progress_run_id: str | None = None) -> int:
         stocks = self.twstock_client.list_stock_universe()
+        if progress_run_id:
+            self.sync_progress_service.start_run(
+                progress_run_id,
+                job_name="sync-stock-universe",
+                total_codes=len(stocks),
+            )
         synced_count = 0
-        for item in stocks:
-            self.stock_repository.upsert_stock(**item)
-            synced_count += 1
-        self.session.flush()
+        current_code: str | None = None
+        try:
+            for item in stocks:
+                current_code = item.get("code")
+                if progress_run_id:
+                    self.sync_progress_service.set_current_code(progress_run_id, current_code)
+                self.stock_repository.upsert_stock(**item)
+                self.session.commit()
+                synced_count += 1
+                if progress_run_id:
+                    self.sync_progress_service.mark_code_success(progress_run_id, current_code)
+        except Exception as exc:
+            self.session.rollback()
+            if progress_run_id:
+                self.sync_progress_service.mark_code_failure(progress_run_id, current_code, str(exc))
+                self.sync_progress_service.fail_run(progress_run_id, str(exc))
+            raise
+
+        if progress_run_id:
+            self.sync_progress_service.complete_run(progress_run_id)
         return synced_count
 
     def sync_history(self, code: str, year: int, month: int) -> int:
@@ -77,20 +101,37 @@ class MarketDataService:
         year: int,
         month: int,
         user_id: int | None = None,
+        progress_run_id: str | None = None,
     ) -> tuple[SyncTargetSelection, int, int, list[str]]:
         selection = self.resolve_sync_targets(codes=codes, user_id=user_id)
+        if progress_run_id:
+            self.sync_progress_service.start_run(
+                progress_run_id,
+                job_name="sync-history",
+                total_codes=len(selection.codes),
+            )
         synced_codes = 0
         synced_rows = 0
         failed_codes: list[str] = []
 
         for code in selection.codes:
             try:
-                with self.session.begin_nested():
-                    synced_rows += self.sync_history(code=code, year=year, month=month)
+                if progress_run_id:
+                    self.sync_progress_service.set_current_code(progress_run_id, code)
+                synced_count = self.sync_history(code=code, year=year, month=month)
+                self.session.commit()
+                synced_rows += synced_count
                 synced_codes += 1
+                if progress_run_id:
+                    self.sync_progress_service.mark_code_success(progress_run_id, code, synced_count)
             except Exception:
+                self.session.rollback()
                 failed_codes.append(code)
+                if progress_run_id:
+                    self.sync_progress_service.mark_code_failure(progress_run_id, code)
 
+        if progress_run_id:
+            self.sync_progress_service.complete_run(progress_run_id)
         return selection, synced_codes, synced_rows, failed_codes
 
     def sync_history_range(self, code: str, start_date: date, end_date: date) -> int:
@@ -105,20 +146,37 @@ class MarketDataService:
         start_date: date,
         end_date: date,
         user_id: int | None = None,
+        progress_run_id: str | None = None,
     ) -> tuple[SyncTargetSelection, int, int, list[str]]:
         selection = self.resolve_sync_targets(codes=codes, user_id=user_id)
+        if progress_run_id:
+            self.sync_progress_service.start_run(
+                progress_run_id,
+                job_name="sync-history-range",
+                total_codes=len(selection.codes),
+            )
         synced_codes = 0
         synced_rows = 0
         failed_codes: list[str] = []
 
         for code in selection.codes:
             try:
-                with self.session.begin_nested():
-                    synced_rows += self.sync_history_range(code=code, start_date=start_date, end_date=end_date)
+                if progress_run_id:
+                    self.sync_progress_service.set_current_code(progress_run_id, code)
+                synced_count = self.sync_history_range(code=code, start_date=start_date, end_date=end_date)
+                self.session.commit()
+                synced_rows += synced_count
                 synced_codes += 1
+                if progress_run_id:
+                    self.sync_progress_service.mark_code_success(progress_run_id, code, synced_count)
             except Exception:
+                self.session.rollback()
                 failed_codes.append(code)
+                if progress_run_id:
+                    self.sync_progress_service.mark_code_failure(progress_run_id, code)
 
+        if progress_run_id:
+            self.sync_progress_service.complete_run(progress_run_id)
         return selection, synced_codes, synced_rows, failed_codes
 
     def resolve_sync_targets(
