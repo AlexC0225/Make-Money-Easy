@@ -1,5 +1,7 @@
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date
+from typing import Callable
 
 from sqlalchemy import select
 
@@ -33,6 +35,12 @@ class SyncTargetSelection:
     selection_mode: str
 
 
+@dataclass(slots=True)
+class HistorySyncResult:
+    status: str
+    synced_rows: int
+
+
 class MarketDataService:
     DEFAULT_SYNC_POOL_INDUSTRIES = (
         "\u534a\u5c0e\u9ad4\u696d",
@@ -47,6 +55,7 @@ class MarketDataService:
     DEFAULT_SYNC_POOL_MARKET = "TSEC"
     DEFAULT_MINIMUM_RECENT_DAILY_TURNOVER = 100_000_000.0
     DEFAULT_RECENT_TURNOVER_LOOKBACK_DAYS = 20
+    HISTORY_COVERAGE_MAX_GAP_DAYS = 7
 
     def __init__(
         self,
@@ -89,11 +98,15 @@ class MarketDataService:
             self.sync_progress_service.complete_run(progress_run_id)
         return synced_count
 
-    def sync_history(self, code: str, year: int, month: int) -> int:
-        metadata = self.twstock_client.get_stock_metadata(code)
-        history = self.twstock_client.get_history(code=code, year=year, month=month)
-        stock = self.stock_repository.upsert_stock(**metadata)
-        return self.stock_repository.upsert_daily_prices(stock_id=stock.id, prices=history)
+    def sync_history(self, code: str, year: int, month: int) -> HistorySyncResult:
+        start_date = date(year, month, 1)
+        end_date = date(year, month, monthrange(year, month)[1])
+        return self._sync_history_window(
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            fetch_history=lambda: self.twstock_client.get_history(code=code, year=year, month=month),
+        )
 
     def sync_history_batch(
         self,
@@ -102,7 +115,7 @@ class MarketDataService:
         month: int,
         user_id: int | None = None,
         progress_run_id: str | None = None,
-    ) -> tuple[SyncTargetSelection, int, int, list[str]]:
+    ) -> tuple[SyncTargetSelection, int, int, list[str], list[str]]:
         selection = self.resolve_sync_targets(codes=codes, user_id=user_id)
         if progress_run_id:
             self.sync_progress_service.start_run(
@@ -112,18 +125,25 @@ class MarketDataService:
             )
         synced_codes = 0
         synced_rows = 0
+        skipped_codes: list[str] = []
         failed_codes: list[str] = []
 
         for code in selection.codes:
             try:
                 if progress_run_id:
                     self.sync_progress_service.set_current_code(progress_run_id, code)
-                synced_count = self.sync_history(code=code, year=year, month=month)
+                sync_result = self.sync_history(code=code, year=year, month=month)
                 self.session.commit()
-                synced_rows += synced_count
+                if sync_result.status == "skipped":
+                    skipped_codes.append(code)
+                    if progress_run_id:
+                        self.sync_progress_service.mark_code_skipped(progress_run_id, code)
+                    continue
+
+                synced_rows += sync_result.synced_rows
                 synced_codes += 1
                 if progress_run_id:
-                    self.sync_progress_service.mark_code_success(progress_run_id, code, synced_count)
+                    self.sync_progress_service.mark_code_success(progress_run_id, code, sync_result.synced_rows)
             except Exception:
                 self.session.rollback()
                 failed_codes.append(code)
@@ -132,13 +152,19 @@ class MarketDataService:
 
         if progress_run_id:
             self.sync_progress_service.complete_run(progress_run_id)
-        return selection, synced_codes, synced_rows, failed_codes
+        return selection, synced_codes, synced_rows, skipped_codes, failed_codes
 
-    def sync_history_range(self, code: str, start_date: date, end_date: date) -> int:
-        metadata = self.twstock_client.get_stock_metadata(code)
-        history = self.twstock_client.get_history_range(code=code, start_date=start_date, end_date=end_date)
-        stock = self.stock_repository.upsert_stock(**metadata)
-        return self.stock_repository.upsert_daily_prices(stock_id=stock.id, prices=history)
+    def sync_history_range(self, code: str, start_date: date, end_date: date) -> HistorySyncResult:
+        return self._sync_history_window(
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            fetch_history=lambda: self.twstock_client.get_history_range(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+        )
 
     def sync_history_range_batch(
         self,
@@ -147,7 +173,7 @@ class MarketDataService:
         end_date: date,
         user_id: int | None = None,
         progress_run_id: str | None = None,
-    ) -> tuple[SyncTargetSelection, int, int, list[str]]:
+    ) -> tuple[SyncTargetSelection, int, int, list[str], list[str]]:
         selection = self.resolve_sync_targets(codes=codes, user_id=user_id)
         if progress_run_id:
             self.sync_progress_service.start_run(
@@ -157,18 +183,25 @@ class MarketDataService:
             )
         synced_codes = 0
         synced_rows = 0
+        skipped_codes: list[str] = []
         failed_codes: list[str] = []
 
         for code in selection.codes:
             try:
                 if progress_run_id:
                     self.sync_progress_service.set_current_code(progress_run_id, code)
-                synced_count = self.sync_history_range(code=code, start_date=start_date, end_date=end_date)
+                sync_result = self.sync_history_range(code=code, start_date=start_date, end_date=end_date)
                 self.session.commit()
-                synced_rows += synced_count
+                if sync_result.status == "skipped":
+                    skipped_codes.append(code)
+                    if progress_run_id:
+                        self.sync_progress_service.mark_code_skipped(progress_run_id, code)
+                    continue
+
+                synced_rows += sync_result.synced_rows
                 synced_codes += 1
                 if progress_run_id:
-                    self.sync_progress_service.mark_code_success(progress_run_id, code, synced_count)
+                    self.sync_progress_service.mark_code_success(progress_run_id, code, sync_result.synced_rows)
             except Exception:
                 self.session.rollback()
                 failed_codes.append(code)
@@ -177,7 +210,7 @@ class MarketDataService:
 
         if progress_run_id:
             self.sync_progress_service.complete_run(progress_run_id)
-        return selection, synced_codes, synced_rows, failed_codes
+        return selection, synced_codes, synced_rows, skipped_codes, failed_codes
 
     def resolve_sync_targets(
         self,
@@ -295,3 +328,25 @@ class MarketDataService:
             float(item.turnover or 0) >= self.DEFAULT_MINIMUM_RECENT_DAILY_TURNOVER
             for item in recent_prices
         )
+
+    def _sync_history_window(
+        self,
+        code: str,
+        start_date: date,
+        end_date: date,
+        fetch_history: Callable[[], list],
+    ) -> HistorySyncResult:
+        stock = self.stock_repository.get_by_code(code)
+        if stock is not None and self.stock_repository.has_daily_price_coverage(
+            stock.id,
+            start_date=start_date,
+            end_date=end_date,
+            max_gap_days=self.HISTORY_COVERAGE_MAX_GAP_DAYS,
+        ):
+            return HistorySyncResult(status="skipped", synced_rows=0)
+
+        metadata = self.twstock_client.get_stock_metadata(code)
+        history = fetch_history()
+        stock = self.stock_repository.upsert_stock(**metadata)
+        synced_rows = self.stock_repository.upsert_daily_prices(stock_id=stock.id, prices=history)
+        return HistorySyncResult(status="synced", synced_rows=synced_rows)

@@ -36,6 +36,7 @@ def test_sync_history_batch_job(client):
     payload = response.json()
     assert payload["synced_codes"] == 2
     assert payload["synced_rows"] == 2
+    assert payload["skipped_codes"] == []
     assert payload["failed_codes"] == []
 
 
@@ -64,6 +65,7 @@ def test_sync_progress_returns_completed_state_after_history_range_sync(client):
     assert progress_payload["completed_codes"] == 2
     assert progress_payload["synced_codes"] == 2
     assert progress_payload["synced_rows"] == 6
+    assert progress_payload["skipped_codes"] == []
     assert progress_payload["failed_codes"] == []
     assert progress_payload["current_code"] is None
     assert progress_payload["started_at"] is not None
@@ -133,6 +135,7 @@ def test_sync_targets_default_to_watchlist_plus_default_pool(client):
         {"code": "2330", "name": "TSMC", "industry": "\u534a\u5c0e\u9ad4\u696d"},
     ]
     assert sync_payload["synced_codes"] == 2
+    assert sync_payload["skipped_codes"] == []
     assert sync_payload["failed_codes"] == []
 
 
@@ -179,6 +182,7 @@ def test_sync_history_range_uses_default_targets_when_codes_omitted(client):
         {"code": "2330", "name": "TSMC", "industry": "\u534a\u5c0e\u9ad4\u696d"},
     ]
     assert payload["synced_codes"] == 2
+    assert payload["skipped_codes"] == []
     assert payload["failed_codes"] == []
 
 
@@ -203,6 +207,7 @@ def test_sync_history_range_only_uses_manual_codes_when_provided(client):
     assert payload["default_pool_industries"] == []
     assert payload["default_pool_items"] == []
     assert payload["synced_codes"] == 2
+    assert payload["skipped_codes"] == []
     assert payload["failed_codes"] == []
 
 
@@ -232,6 +237,7 @@ def test_sync_history_range_isolates_failed_code_writes(client, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["synced_codes"] == 1
+    assert payload["skipped_codes"] == []
     assert payload["failed_codes"] == ["2454"]
 
     session = get_session_factory()()
@@ -260,7 +266,7 @@ def test_sync_history_range_commits_each_code_without_outer_commit(client, monke
     session = get_session_factory()()
     try:
         service = MarketDataService(session, FakeTwStockClient())
-        _, synced_codes, synced_rows, failed_codes = service.sync_history_range_batch(
+        _, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_range_batch(
             codes=["2330", "2454"],
             start_date=date(2026, 3, 24),
             end_date=date(2026, 3, 26),
@@ -268,6 +274,7 @@ def test_sync_history_range_commits_each_code_without_outer_commit(client, monke
 
         assert synced_codes == 1
         assert synced_rows == 3
+        assert skipped_codes == []
         assert failed_codes == ["2454"]
     finally:
         session.close()
@@ -279,6 +286,78 @@ def test_sync_history_range_commits_each_code_without_outer_commit(client, monke
         assert len(prices) == 3
     finally:
         verification_session.close()
+
+
+def test_sync_history_range_skips_codes_already_covered(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+    FakeTwStockClient.history_range_calls = 0
+
+    first_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert first_response.status_code == 200
+    assert FakeTwStockClient.history_range_calls == 1
+
+    second_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert second_response.status_code == 200
+    payload = second_response.json()
+    assert payload["synced_codes"] == 0
+    assert payload["synced_rows"] == 0
+    assert payload["skipped_codes"] == ["2330"]
+    assert payload["failed_codes"] == []
+    assert FakeTwStockClient.history_range_calls == 1
+
+
+def test_sync_progress_tracks_skipped_codes_after_history_range_sync(client):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    seed_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+    assert seed_response.status_code == 200
+
+    run_id = "sync-progress-range-skipped"
+    response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+            "run_id": run_id,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["skipped_codes"] == ["2330"]
+
+    progress_response = client.get(f"/api/v1/jobs/sync/progress/{run_id}")
+    assert progress_response.status_code == 200
+    progress_payload = progress_response.json()
+    assert progress_payload["completed_codes"] == 1
+    assert progress_payload["synced_codes"] == 0
+    assert progress_payload["synced_rows"] == 0
+    assert progress_payload["skipped_codes"] == ["2330"]
+    assert progress_payload["failed_codes"] == []
 
 
 def test_sync_history_range_returns_503_when_database_is_busy(client, monkeypatch):

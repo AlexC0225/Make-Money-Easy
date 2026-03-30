@@ -39,7 +39,7 @@ def test_strategy_service_skips_buy_when_max_open_positions_reached():
     try:
         service = StrategyService(session)
         service._get_position = lambda user_id, code: None  # type: ignore[method-assign]
-        service._count_open_positions = lambda user_id: service.settings.max_open_positions  # type: ignore[method-assign]
+        service._count_open_positions = lambda user_id: 1  # type: ignore[method-assign]
 
         result = service._apply_signal_to_portfolio(
             user_id=1,
@@ -54,10 +54,11 @@ def test_strategy_service_skips_buy_when_max_open_positions_reached():
             position_sizing_mode="fixed_shares",
             buy_quantity=1000,
             cash_allocation_pct=10,
+            max_open_positions=1,
             twstock_client=object(),  # type: ignore[arg-type]
         )
 
         assert result.status == "SKIPPED"
-        assert result.message == f"Max open positions reached ({service.settings.max_open_positions})."
+        assert result.message == "Max open positions reached (1)."
     finally:
         session.close()

@@ -2,7 +2,7 @@ from collections.abc import Generator
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -76,21 +76,17 @@ def create_db_and_tables() -> None:
 
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
-    _apply_sqlite_schema_updates(engine)
+    _apply_schema_updates(engine)
 
 
-def _apply_sqlite_schema_updates(engine) -> None:
-    if engine.url.get_backend_name() != "sqlite":
-        return
-
+def _apply_schema_updates(engine) -> None:
     with engine.begin() as connection:
-        tables = {row[0] for row in connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")}
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
         if "automation_configs" not in tables:
             return
 
-        columns = {
-            row[1] for row in connection.exec_driver_sql("PRAGMA table_info('automation_configs')")
-        }
+        columns = {column["name"] for column in inspector.get_columns("automation_configs")}
         if "position_sizing_mode" not in columns:
             connection.exec_driver_sql(
                 "ALTER TABLE automation_configs ADD COLUMN position_sizing_mode VARCHAR(32) NOT NULL DEFAULT 'fixed_shares'"
@@ -98,4 +94,8 @@ def _apply_sqlite_schema_updates(engine) -> None:
         if "cash_allocation_pct" not in columns:
             connection.exec_driver_sql(
                 "ALTER TABLE automation_configs ADD COLUMN cash_allocation_pct FLOAT NOT NULL DEFAULT 10.0"
+            )
+        if "max_open_positions" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE automation_configs ADD COLUMN max_open_positions INTEGER NOT NULL DEFAULT 20"
             )

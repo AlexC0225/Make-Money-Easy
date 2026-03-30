@@ -13,6 +13,7 @@ class SyncProgressState:
     completed_codes: int = 0
     synced_codes: int = 0
     synced_rows: int = 0
+    skipped_codes: list[str] = field(default_factory=list)
     failed_codes: list[str] = field(default_factory=list)
     current_code: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -52,6 +53,17 @@ class SyncProgressService:
             state.completed_codes += 1
             state.synced_codes += 1
             state.synced_rows += synced_rows
+            return deepcopy(state)
+
+    def mark_code_skipped(self, run_id: str, code: str | None) -> SyncProgressState | None:
+        with self._lock:
+            state = self._states.get(run_id)
+            if state is None:
+                return None
+            state.current_code = code
+            state.completed_codes += 1
+            if code and code not in state.skipped_codes:
+                state.skipped_codes.append(code)
             return deepcopy(state)
 
     def mark_code_failure(self, run_id: str, code: str | None, error_message: str | None = None) -> SyncProgressState | None:

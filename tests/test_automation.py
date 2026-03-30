@@ -20,6 +20,7 @@ def test_automation_config_defaults_and_can_be_updated(client):
     assert get_payload["position_sizing_mode"] == "fixed_shares"
     assert get_payload["buy_quantity"] == 1000
     assert get_payload["cash_allocation_pct"] == 10.0
+    assert get_payload["max_open_positions"] == 20
 
     update_response = client.put(
         f"/api/v1/strategies/automation/{user_id}",
@@ -29,6 +30,7 @@ def test_automation_config_defaults_and_can_be_updated(client):
             "position_sizing_mode": "cash_percent",
             "buy_quantity": 2000,
             "cash_allocation_pct": 25,
+            "max_open_positions": 8,
         },
     )
     assert update_response.status_code == 200
@@ -38,3 +40,4 @@ def test_automation_config_defaults_and_can_be_updated(client):
     assert update_payload["position_sizing_mode"] == "cash_percent"
     assert update_payload["buy_quantity"] == 2000
     assert update_payload["cash_allocation_pct"] == 25.0
+    assert update_payload["max_open_positions"] == 8

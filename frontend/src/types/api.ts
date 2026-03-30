@@ -192,6 +192,7 @@ export type AutomationConfig = {
   position_sizing_mode: 'fixed_shares' | 'cash_percent'
   buy_quantity: number
   cash_allocation_pct: number
+  max_open_positions: number
   updated_at?: string | null
 }
 
@@ -201,6 +202,7 @@ export type AutomationConfigUpdatePayload = {
   position_sizing_mode: 'fixed_shares' | 'cash_percent'
   buy_quantity: number
   cash_allocation_pct: number
+  max_open_positions: number
 }
 
 export type BacktestResult = {
@@ -318,6 +320,7 @@ export type SyncProgress = {
   completed_codes: number
   synced_codes: number
   synced_rows: number
+  skipped_codes: string[]
   failed_codes: string[]
   current_code?: string | null
   started_at: string
@@ -330,6 +333,7 @@ export type HistoryRangeSyncResult = SyncTargetPreview & {
   end_date: string
   synced_codes: number
   synced_rows: number
+  skipped_codes: string[]
   failed_codes: string[]
 }
 

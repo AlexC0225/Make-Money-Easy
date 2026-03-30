@@ -183,6 +183,41 @@ class StockRepository:
         statement = statement.order_by(DailyPrice.trade_date.asc())
         return list(self.session.scalars(statement))
 
+    def has_daily_price_coverage(
+        self,
+        stock_id: int,
+        start_date: date,
+        end_date: date,
+        max_gap_days: int = 7,
+    ) -> bool:
+        if start_date > end_date:
+            return False
+
+        trade_dates = list(
+            self.session.scalars(
+                select(DailyPrice.trade_date)
+                .where(
+                    DailyPrice.stock_id == stock_id,
+                    DailyPrice.trade_date >= start_date,
+                    DailyPrice.trade_date <= end_date,
+                )
+                .order_by(DailyPrice.trade_date.asc())
+            )
+        )
+        if not trade_dates:
+            return False
+
+        if (trade_dates[0] - start_date).days > max_gap_days:
+            return False
+        if (end_date - trade_dates[-1]).days > max_gap_days:
+            return False
+
+        for previous, current in zip(trade_dates, trade_dates[1:]):
+            if (current - previous).days > max_gap_days:
+                return False
+
+        return True
+
     def get_recent_daily_prices(self, stock_id: int, limit: int) -> list[DailyPrice]:
         statement = (
             select(DailyPrice)

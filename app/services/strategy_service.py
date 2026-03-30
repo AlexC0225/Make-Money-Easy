@@ -69,6 +69,7 @@ class StrategyService:
         position_sizing_mode: str = POSITION_SIZING_FIXED_SHARES,
         buy_quantity: int = 1000,
         cash_allocation_pct: float = 10.0,
+        max_open_positions: int | None = None,
         twstock_client: TwStockClient | None = None,
     ) -> StrategySignalRead:
         strategy = self.get_strategy(strategy_name)
@@ -118,6 +119,7 @@ class StrategyService:
                 position_sizing_mode=position_sizing_mode,
                 buy_quantity=buy_quantity,
                 cash_allocation_pct=cash_allocation_pct,
+                max_open_positions=max_open_positions,
                 twstock_client=twstock_client,
             )
             strategy_run.snapshot_json = {
@@ -218,9 +220,11 @@ class StrategyService:
         position_sizing_mode: str,
         buy_quantity: int,
         cash_allocation_pct: float,
+        max_open_positions: int | None,
         twstock_client: TwStockClient,
     ) -> StrategyExecutionRead:
         position = self._get_position(user_id=user_id, code=code)
+        effective_max_open_positions = max_open_positions or self.settings.max_open_positions
 
         if signal.signal == "HOLD":
             return StrategyExecutionRead(
@@ -240,13 +244,13 @@ class StrategyService:
                 message="Position already exists, skipping duplicate buy.",
             )
 
-        if signal.signal == "BUY" and self._count_open_positions(user_id) >= self.settings.max_open_positions:
+        if signal.signal == "BUY" and self._count_open_positions(user_id) >= effective_max_open_positions:
             return StrategyExecutionRead(
                 applied=False,
                 action="BUY",
                 quantity=0,
                 status="SKIPPED",
-                message=f"Max open positions reached ({self.settings.max_open_positions}).",
+                message=f"Max open positions reached ({effective_max_open_positions}).",
             )
 
         if signal.signal == "SELL" and (position is None or position.quantity <= 0):

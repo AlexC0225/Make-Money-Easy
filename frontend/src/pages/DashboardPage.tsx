@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CandlestickChart, RefreshCw, Wallet } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -15,11 +15,26 @@ import { getActiveUserId } from '../lib/storage'
 function describeStrategy(strategyName?: string) {
   switch (strategyName) {
     case 'hybrid_tw_strategy':
-      return '以趨勢與量價條件判斷進出，偏向波段觀察。'
+      return '結合 MA20 / MA60 趨勢濾網與 Best Four Point 訊號，適合拿來觀察偏中期的台股趨勢切換。'
     case 'connors_rsi2_long':
-      return '用長期趨勢搭配 RSI(2) 超跌訊號，偏向短線均值回歸。'
+      return '以 SMA200 判斷大方向，再用 RSI(2) 尋找短線超跌反彈切入點，偏向短週期長多策略。'
+    case 'tw_daily_open_momentum_long':
+      return '著重均線多頭、成交量與報酬動能，訊號在收盤後確認，隔天開盤執行，風控偏保守。'
+    case 'tw_momentum_breakout_long':
+      return '以突破、量能放大與 RSI 強度確認進場，搭配 ATR 停損與持有天數限制，偏向動能追蹤。'
     default:
-      return '選好策略後，可直接到策略計畫頁執行手動回測。'
+      return '選好策略後，可先到策略計畫頁做手動回測，確認節奏、風險與部位規則再啟用自動化。'
+  }
+}
+
+function describeQuoteSource(source?: 'realtime' | 'cache' | 'unavailable') {
+  switch (source) {
+    case 'cache':
+      return '目前顯示的是快取報價。'
+    case 'unavailable':
+      return '暫時拿不到即時報價。'
+    default:
+      return '目前顯示的是即時報價。'
   }
 }
 
@@ -30,15 +45,12 @@ function toDateInputValue(input: Date) {
   return `${year}-${month}-${day}`
 }
 
-function describeQuoteSource(source?: 'realtime' | 'cache' | 'unavailable') {
-  switch (source) {
-    case 'cache':
-      return '最新成交價暫用快取'
-    case 'unavailable':
-      return '目前沒有最新成交價'
-    default:
-      return '最新成交價來自即時快照'
-  }
+function formatExecutionTiming(executionTiming?: string) {
+  return executionTiming === 'next_market_open' ? '隔日開盤執行' : '當日收盤判斷'
+}
+
+function formatTradeFrequency(tradeFrequency?: string) {
+  return tradeFrequency === 'daily_open_once' ? '每日固定節奏' : '依訊號觸發'
 }
 
 export function DashboardPage() {
@@ -121,7 +133,7 @@ export function DashboardPage() {
     const earliestRequest = recentRequests[0]
     const waitMs = Math.max(0, 5_000 - (now - earliestRequest)) + 50
     queuedSymbolRef.current = symbol
-    setQuoteThrottleMessage(`即時報價請求過快，將在 ${Math.ceil(waitMs / 1000)} 秒後自動更新。`)
+    setQuoteThrottleMessage(`查詢過於頻繁，約 ${Math.ceil(waitMs / 1000)} 秒後會自動重試。`)
 
     if (queuedTimerRef.current !== null) {
       window.clearTimeout(queuedTimerRef.current)
@@ -197,9 +209,9 @@ export function DashboardPage() {
       position_sizing_mode: 'fixed_shares' | 'cash_percent'
       buy_quantity: number
       cash_allocation_pct: number
+      max_open_positions: number
       enabled: boolean
-    }) =>
-      api.updateAutomationConfig(activeUserId!, payload),
+    }) => api.updateAutomationConfig(activeUserId!, payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['automation-config', activeUserId] })
     },
@@ -228,7 +240,7 @@ export function DashboardPage() {
     return (
       <div className="empty-workspace">
         <h2>還沒有啟用工作區</h2>
-        <p>先建立工作區後，才能查看持倉、關注清單與手動回測。</p>
+        <p>先建立工作區，才能開始管理持股、同步資料與執行策略。</p>
         <Link to="/setup" className="primary-button">
           前往工作區設定
         </Link>
@@ -240,7 +252,7 @@ export function DashboardPage() {
   const positionSizingMode = automationConfigQuery.data?.position_sizing_mode ?? 'fixed_shares'
   const buyQuantity = automationConfigQuery.data?.buy_quantity ?? 1000
   const cashAllocationPct = automationConfigQuery.data?.cash_allocation_pct ?? 10
-  const maxOpenPositions = 20
+  const maxOpenPositions = automationConfigQuery.data?.max_open_positions ?? 20
   const selectedStrategyMeta = strategyCatalogQuery.data?.find((item) => item.name === selectedStrategy)
   const createAutomationPayload = (
     overrides: Partial<{
@@ -249,6 +261,7 @@ export function DashboardPage() {
       position_sizing_mode: 'fixed_shares' | 'cash_percent'
       buy_quantity: number
       cash_allocation_pct: number
+      max_open_positions: number
     }> = {},
   ) => ({
     enabled: automationConfigQuery.data?.enabled ?? true,
@@ -256,22 +269,27 @@ export function DashboardPage() {
     position_sizing_mode: positionSizingMode,
     buy_quantity: buyQuantity,
     cash_allocation_pct: cashAllocationPct,
+    max_open_positions: maxOpenPositions,
     ...overrides,
   })
+  const strategySummary =
+    positionSizingMode === 'cash_percent'
+      ? `每次投入可用現金 ${cashAllocationPct}%`
+      : `每次買進 ${buyQuantity.toLocaleString('zh-TW')} 股`
 
   return (
     <div className="page-grid">
       <section className="hero-strip">
         <div>
           <p className="hero-kicker">Workspace</p>
-          <h2>{userQuery.data ? `${userQuery.data.username} 的工作臺` : '工作臺載入中...'}</h2>
-          <p>先看部位與行情，再決定要不要切到策略計畫做手動回測，整個工作流會更順。</p>
+          <h2>{userQuery.data ? `${userQuery.data.username} 的工作臺` : '載入工作區中...'}</h2>
+          <p>把即時報價、工作區部位與自動化策略設定集中在同一個視角裡，方便你快速檢查今天的市場與策略節奏。</p>
         </div>
       </section>
 
       <div className="stats-grid">
         <StatCard label="可用現金" value={formatCurrency(summaryQuery.data?.available_cash ?? 0)} icon={<Wallet size={18} />} />
-        <StatCard label="持倉市值" value={formatCurrency(summaryQuery.data?.market_value ?? 0)} icon={<CandlestickChart size={18} />} />
+        <StatCard label="持股市值" value={formatCurrency(summaryQuery.data?.market_value ?? 0)} icon={<CandlestickChart size={18} />} />
         <StatCard label="總權益" value={formatCurrency(summaryQuery.data?.total_equity ?? 0)} />
         <StatCard
           label="未實現損益"
@@ -281,7 +299,7 @@ export function DashboardPage() {
       </div>
 
       <div className="dashboard-focus-grid">
-        <Panel title="行情觀察" subtitle="Market View">
+        <Panel title="市場觀察" subtitle="Market View">
           <div className="stack-form">
             <div className="form-grid form-grid--three">
               <label>
@@ -290,7 +308,7 @@ export function DashboardPage() {
                   value={symbolInput}
                   onChange={updateSymbolInput}
                   onResolved={(stock) => resolveSymbol(stock.code)}
-                  placeholder="例如 2330 或 台積電"
+                  placeholder="例如 2330 或輸入股票名稱"
                 />
               </label>
               <label>
@@ -304,20 +322,16 @@ export function DashboardPage() {
             </div>
 
             <div className="inline-actions">
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={refreshMarketView}
-              >
+              <button className="ghost-button" type="button" onClick={refreshMarketView}>
                 <RefreshCw size={16} />
-                重新整理
+                重新整理報價
               </button>
               <button
                 className={autoRefreshQuote ? 'primary-button' : 'ghost-button'}
                 type="button"
                 onClick={() => setAutoRefreshQuote((current) => !current)}
               >
-                {autoRefreshQuote ? '關閉即時更新' : '啟用即時更新'}
+                {autoRefreshQuote ? '已啟用自動刷新' : '啟用自動刷新'}
               </button>
             </div>
 
@@ -344,28 +358,28 @@ export function DashboardPage() {
                 <div className="quote-meta">
                   <p>報價時間 {new Date(quoteQuery.data.quote_time).toLocaleTimeString('zh-TW', { hour12: false })}</p>
                   <p>{describeQuoteSource(quoteQuery.data.latest_trade_price_source)}</p>
-                  <p>開 {quoteQuery.data.open_price ?? '--'}</p>
-                  <p>高 {quoteQuery.data.high_price ?? '--'}</p>
-                  <p>低 {quoteQuery.data.low_price ?? '--'}</p>
-                  <p>量 {quoteQuery.data.accumulate_trade_volume ?? '--'}</p>
+                  <p>開盤 {quoteQuery.data.open_price ?? '--'}</p>
+                  <p>最高 {quoteQuery.data.high_price ?? '--'}</p>
+                  <p>最低 {quoteQuery.data.low_price ?? '--'}</p>
+                  <p>成交量 {quoteQuery.data.accumulate_trade_volume ?? '--'}</p>
                 </div>
               </div>
             ) : null}
 
             {quoteThrottleMessage ? <p className="muted-text">{quoteThrottleMessage}</p> : null}
             {quoteQuery.data?.warning_message ? <p className="muted-text">{quoteQuery.data.warning_message}</p> : null}
-            {historyQuery.isPending ? <p className="muted-text">正在載入歷史圖表資料...</p> : null}
+            {historyQuery.isPending ? <p className="muted-text">正在讀取 K 線資料...</p> : null}
             {historyQuery.data ? <KLineChart data={historyQuery.data.prices} /> : null}
-            {historyQuery.isSuccess && !historyQuery.data ? <div className="empty-card">目前沒有可顯示的圖表資料。</div> : null}
+            {historyQuery.isSuccess && !historyQuery.data ? <div className="empty-card">這個區間目前沒有可顯示的歷史資料。</div> : null}
             {quoteQuery.error ? <p className="error-text">{quoteQuery.error.message}</p> : null}
             {historyQuery.error ? <p className="error-text">{historyQuery.error.message}</p> : null}
           </div>
         </Panel>
 
-        <Panel title="自動下單策略" subtitle="Auto Execution">
+        <Panel title="工作臺執行策略" subtitle="Auto Execution">
           <div className="strategy-focus-card">
             <label>
-              執行策略
+              目前策略
               <select
                 value={selectedStrategy}
                 onChange={(event) => {
@@ -383,29 +397,29 @@ export function DashboardPage() {
 
             <div className="info-stack">
               <div className="info-card">
-                <strong>{selectedStrategyMeta?.title ?? '尚未載入策略'}</strong>
+                <strong>策略說明</strong>
                 <p>{describeStrategy(selectedStrategyMeta?.name)}</p>
               </div>
               <div className="info-card">
-                <strong>下單標的</strong>
-                <p>排程會對工作區預設同步池執行策略，也就是自選關注清單加上科技、金融產業股票池。</p>
+                <strong>執行節奏</strong>
+                <p>
+                  {formatExecutionTiming(selectedStrategyMeta?.execution_timing)}，{formatTradeFrequency(selectedStrategyMeta?.trade_frequency)}。
+                </p>
               </div>
               <div className="info-card">
-                <strong>執行方式</strong>
-                <p>{selectedStrategyMeta?.execution_timing === 'next_market_open' ? '每天 09:00 自動決策並依即時報價執行' : '每天 09:00 自動決策並依即時報價執行'}</p>
+                <strong>部位規則</strong>
+                <p>
+                  {strategySummary}，最多同時持有 {maxOpenPositions} 檔標的。
+                </p>
               </div>
               <div className="info-card">
                 <strong>使用提醒</strong>
-                <p>你在這裡只需要選策略，系統會於每日 14:10 更新資料，並在隔天 09:00 自動決策與套用下單。</p>
-              </div>
-              <div className="info-card">
-                <strong>風控設定</strong>
-                <p>自動交易目前最多同時持有 {maxOpenPositions} 檔股票，超過上限的新買進訊號會跳過。</p>
+                <p>若要先驗證策略表現，建議先到策略計畫頁做手動回測，再決定是否啟用自動化。</p>
               </div>
             </div>
 
             <label>
-              下單方式
+              進場部位模式
               <select
                 value={positionSizingMode}
                 onChange={(event) =>
@@ -418,7 +432,7 @@ export function DashboardPage() {
                 disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
               >
                 <option value="fixed_shares">固定股數</option>
-                <option value="cash_percent">可用現金百分比</option>
+                <option value="cash_percent">可用現金比例</option>
               </select>
             </label>
 
@@ -459,28 +473,50 @@ export function DashboardPage() {
               </label>
             )}
 
+            <label>
+              最大持倉檔數
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={maxOpenPositions}
+                onWheel={(event) => event.currentTarget.blur()}
+                onChange={(event) =>
+                  updateAutomationConfigMutation.mutate(
+                    createAutomationPayload({ max_open_positions: Number(event.target.value) }),
+                  )
+                }
+                disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
+              />
+            </label>
+
             {automationConfigQuery.data ? (
               <div className="info-card">
                 <strong>{automationConfigQuery.data.enabled ? '自動化已啟用' : '自動化已停用'}</strong>
                 <p>
-                  目前設定：{automationConfigQuery.data.strategy_name}，
+                  目前設定：{selectedStrategyMeta?.title ?? automationConfigQuery.data.strategy_name}，
                   {automationConfigQuery.data.position_sizing_mode === 'cash_percent'
                     ? `每次投入可用現金 ${automationConfigQuery.data.cash_allocation_pct}%`
-                    : `每次買進 ${automationConfigQuery.data.buy_quantity} 股`}
-                  ，最多持倉 {maxOpenPositions} 檔。
+                    : `每次買進 ${automationConfigQuery.data.buy_quantity.toLocaleString('zh-TW')} 股`}
+                  ，最多持有 {automationConfigQuery.data.max_open_positions} 檔。
                 </p>
               </div>
             ) : null}
+
             <div className="inline-actions">
               <button
                 className={automationConfigQuery.data?.enabled ? 'ghost-button' : 'primary-button'}
                 type="button"
-                onClick={() => updateAutomationConfigMutation.mutate(createAutomationPayload({ enabled: !(automationConfigQuery.data?.enabled ?? true) }))}
+                onClick={() =>
+                  updateAutomationConfigMutation.mutate(
+                    createAutomationPayload({ enabled: !(automationConfigQuery.data?.enabled ?? true) }),
+                  )
+                }
                 disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending}
               >
                 {automationConfigQuery.data?.enabled ? '暫停自動化' : '啟用自動化'}
               </button>
-              <Link to="/logs" className="ghost-button">
+              <Link to="/backtests" className="ghost-button">
                 前往策略計畫
               </Link>
             </div>

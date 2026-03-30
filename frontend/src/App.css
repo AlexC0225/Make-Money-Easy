@@ -109,6 +109,78 @@ body {
   padding: 2rem;
 }
 
+.app-main-content {
+  display: grid;
+  gap: 1.4rem;
+}
+
+.global-sync-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1.2rem;
+  padding: 1rem 1.1rem;
+  border-radius: 22px;
+  border: 1px solid rgba(12, 124, 89, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(255, 214, 144, 0.18), transparent 24%),
+    linear-gradient(135deg, rgba(237, 248, 244, 0.98), rgba(255, 251, 244, 0.96));
+}
+
+.global-sync-banner--failed {
+  border-color: rgba(181, 69, 58, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(244, 184, 176, 0.18), transparent 24%),
+    linear-gradient(135deg, rgba(255, 248, 246, 0.98), rgba(255, 251, 244, 0.96));
+}
+
+.global-sync-banner__copy {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.global-sync-banner__copy p,
+.global-sync-banner__caption {
+  margin: 0;
+  color: #4f6b66;
+  line-height: 1.65;
+}
+
+.global-sync-banner__head {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.global-sync-banner__head strong {
+  font-size: 1.08rem;
+}
+
+.global-sync-banner__kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.72rem;
+  color: #5c756f;
+}
+
+.global-sync-banner__actions,
+.global-sync-banner__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.global-sync-banner__actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.global-sync-banner__meta {
+  color: #43635d;
+  font-size: 0.92rem;
+}
+
 .auth-shell {
   min-height: 100vh;
   display: grid;
@@ -1482,7 +1554,9 @@ select {
   .universe-section-head,
   .universe-stock-card,
   .signal-item,
-  .setup-subsection-head {
+  .setup-subsection-head,
+  .global-sync-banner,
+  .global-sync-banner__actions {
     flex-direction: column;
     align-items: stretch;
   }

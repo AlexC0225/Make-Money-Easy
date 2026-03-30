@@ -204,6 +204,18 @@ class JobLoggingService:
             self._append_if_present(updates, "synced_codes", payload, "synced_codes")
             self._append_if_present(updates, "synced_rows", payload, "synced_rows")
 
+            skipped_codes = payload.get("skipped_codes")
+            if isinstance(skipped_codes, list):
+                updates.append(
+                    {
+                        "label": "skipped_codes",
+                        "value": {
+                            "count": len(skipped_codes),
+                            "codes": skipped_codes[:10],
+                        },
+                    }
+                )
+
             failed_codes = payload.get("failed_codes")
             if isinstance(failed_codes, list):
                 updates.append(

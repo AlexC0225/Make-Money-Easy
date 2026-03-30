@@ -41,6 +41,7 @@ class AutomationService:
                 position_sizing_mode=POSITION_SIZING_FIXED_SHARES,
                 buy_quantity=1000,
                 cash_allocation_pct=settings.default_cash_allocation_pct,
+                max_open_positions=settings.max_open_positions,
                 enabled=True,
             )
 
@@ -51,6 +52,7 @@ class AutomationService:
             position_sizing_mode=config.position_sizing_mode,
             buy_quantity=config.buy_quantity,
             cash_allocation_pct=config.cash_allocation_pct,
+            max_open_positions=config.max_open_positions,
             updated_at=config.updated_at,
         )
 
@@ -66,6 +68,7 @@ class AutomationService:
             position_sizing_mode=payload.position_sizing_mode,
             buy_quantity=payload.buy_quantity,
             cash_allocation_pct=payload.cash_allocation_pct,
+            max_open_positions=payload.max_open_positions,
         )
         return AutomationConfigRead(
             user_id=config.user_id,
@@ -74,6 +77,7 @@ class AutomationService:
             position_sizing_mode=config.position_sizing_mode,
             buy_quantity=config.buy_quantity,
             cash_allocation_pct=config.cash_allocation_pct,
+            max_open_positions=config.max_open_positions,
             updated_at=config.updated_at,
         )
 
@@ -115,6 +119,7 @@ class AutomationService:
                             position_sizing_mode=config.position_sizing_mode,
                             buy_quantity=config.buy_quantity,
                             cash_allocation_pct=config.cash_allocation_pct,
+                            max_open_positions=config.max_open_positions,
                             twstock_client=self.twstock_client,
                         )
                         execution_details.append(
@@ -124,6 +129,7 @@ class AutomationService:
                                 "strategy_name": config.strategy_name,
                                 "position_sizing_mode": config.position_sizing_mode,
                                 "cash_allocation_pct": config.cash_allocation_pct,
+                                "max_open_positions": config.max_open_positions,
                                 "signal": result.signal,
                                 "signal_reason": result.signal_reason,
                                 "execution": {
@@ -144,6 +150,7 @@ class AutomationService:
                                 "strategy_name": config.strategy_name,
                                 "position_sizing_mode": config.position_sizing_mode,
                                 "cash_allocation_pct": config.cash_allocation_pct,
+                                "max_open_positions": config.max_open_positions,
                                 "signal": "ERROR",
                                 "signal_reason": None,
                                 "execution": {
@@ -168,6 +175,7 @@ class AutomationService:
                         "strategy_name": config.strategy_name,
                         "position_sizing_mode": config.position_sizing_mode,
                         "cash_allocation_pct": config.cash_allocation_pct,
+                        "max_open_positions": config.max_open_positions,
                         "signal": "ERROR",
                         "signal_reason": None,
                         "execution": {

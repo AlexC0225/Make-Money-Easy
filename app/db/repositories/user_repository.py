@@ -71,6 +71,7 @@ class UserRepository:
         position_sizing_mode: str,
         buy_quantity: int,
         cash_allocation_pct: float,
+        max_open_positions: int,
         enabled: bool = True,
     ) -> AutomationConfig:
         config = self.get_automation_config_by_user_id(user_id)
@@ -82,6 +83,7 @@ class UserRepository:
                 position_sizing_mode=position_sizing_mode,
                 buy_quantity=buy_quantity,
                 cash_allocation_pct=cash_allocation_pct,
+                max_open_positions=max_open_positions,
             )
             self.session.add(config)
             self.session.flush()
@@ -92,5 +94,6 @@ class UserRepository:
         config.position_sizing_mode = position_sizing_mode
         config.buy_quantity = buy_quantity
         config.cash_allocation_pct = cash_allocation_pct
+        config.max_open_positions = max_open_positions
         self.session.flush()
         return config

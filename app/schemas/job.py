@@ -45,6 +45,7 @@ class HistorySyncResponse(SyncTargetPreviewResponse):
     month: int
     synced_codes: int
     synced_rows: int
+    skipped_codes: list[str] = Field(default_factory=list)
     failed_codes: list[str]
 
 
@@ -53,6 +54,7 @@ class HistoryRangeSyncResponse(SyncTargetPreviewResponse):
     end_date: str
     synced_codes: int
     synced_rows: int
+    skipped_codes: list[str] = Field(default_factory=list)
     failed_codes: list[str]
 
 
@@ -64,6 +66,7 @@ class SyncProgressResponse(BaseModel):
     completed_codes: int
     synced_codes: int
     synced_rows: int
+    skipped_codes: list[str] = Field(default_factory=list)
     failed_codes: list[str] = Field(default_factory=list)
     current_code: str | None = None
     started_at: datetime

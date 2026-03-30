@@ -16,6 +16,7 @@ class AutomationConfig(Base):
     position_sizing_mode: Mapped[str] = mapped_column(String(32), default="fixed_shares")
     buy_quantity: Mapped[int] = mapped_column(Integer, default=1000)
     cash_allocation_pct: Mapped[float] = mapped_column(Float, default=10.0)
+    max_open_positions: Mapped[int] = mapped_column(Integer, default=20)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -16,16 +16,16 @@ def main() -> None:
     session = get_session_factory()()
     try:
         service = MarketDataService(session, TwStockClient())
-        synced_codes, synced_rows, failed_codes = service.sync_history_range_batch(
+        _, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_range_batch(
             codes=args.codes,
             start_date=date.fromisoformat(args.start_date),
             end_date=date.fromisoformat(args.end_date),
         )
-        session.commit()
         print(
             {
                 "synced_codes": synced_codes,
                 "synced_rows": synced_rows,
+                "skipped_codes": skipped_codes,
                 "failed_codes": failed_codes,
             }
         )

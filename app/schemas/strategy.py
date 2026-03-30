@@ -65,6 +65,7 @@ class AutomationConfigRead(BaseModel):
     position_sizing_mode: Literal["fixed_shares", "cash_percent"]
     buy_quantity: int
     cash_allocation_pct: float
+    max_open_positions: int
     updated_at: datetime | None = None
 
 
@@ -74,6 +75,7 @@ class AutomationConfigUpdateRequest(BaseModel):
     position_sizing_mode: Literal["fixed_shares", "cash_percent"] = POSITION_SIZING_FIXED_SHARES
     buy_quantity: int = Field(default=1000, gt=0)
     cash_allocation_pct: float = Field(default=10.0, gt=0, le=100)
+    max_open_positions: int = Field(default_factory=lambda: get_settings().max_open_positions, gt=0)
 
     @model_validator(mode="after")
     def validate_sizing_mode(self):

@@ -10,7 +10,7 @@ def run_sync_history_job(codes: list[str], year: int, month: int) -> dict[str, o
     session = get_session_factory()()
     try:
         service = MarketDataService(session, TwStockClient())
-        _, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
+        _, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_batch(
             codes=codes,
             year=year,
             month=month,
@@ -18,6 +18,7 @@ def run_sync_history_job(codes: list[str], year: int, month: int) -> dict[str, o
         return {
             "synced_codes": synced_codes,
             "synced_rows": synced_rows,
+            "skipped_codes": skipped_codes,
             "failed_codes": failed_codes,
         }
     finally:
@@ -31,7 +32,7 @@ def run_sync_current_month_history_job(limit: int | None = None) -> dict[str, ob
         repository = StockRepository(session)
         codes = [stock.code for stock in repository.list_active_stocks(limit=limit)]
         service = MarketDataService(session, TwStockClient())
-        _, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
+        _, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_batch(
             codes=codes,
             year=now.year,
             month=now.month,
@@ -41,6 +42,7 @@ def run_sync_current_month_history_job(limit: int | None = None) -> dict[str, ob
             "month": now.month,
             "synced_codes": synced_codes,
             "synced_rows": synced_rows,
+            "skipped_codes": skipped_codes,
             "failed_codes": failed_codes,
         }
     finally:

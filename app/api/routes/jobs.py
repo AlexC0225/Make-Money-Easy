@@ -109,7 +109,7 @@ def sync_history_batch(
     service = MarketDataService(db, client)
     progress_service = SyncProgressService()
     try:
-        selection, synced_codes, synced_rows, failed_codes = service.sync_history_batch(
+        selection, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_batch(
             codes=payload.codes,
             year=payload.year,
             month=payload.month,
@@ -140,6 +140,7 @@ def sync_history_batch(
         month=payload.month,
         synced_codes=synced_codes,
         synced_rows=synced_rows,
+        skipped_codes=skipped_codes,
         failed_codes=failed_codes,
     )
 
@@ -155,7 +156,7 @@ def sync_history_range_batch(
     try:
         start_date = date.fromisoformat(payload.start_date)
         end_date = date.fromisoformat(payload.end_date)
-        selection, synced_codes, synced_rows, failed_codes = service.sync_history_range_batch(
+        selection, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_range_batch(
             codes=payload.codes,
             start_date=start_date,
             end_date=end_date,
@@ -186,6 +187,7 @@ def sync_history_range_batch(
         end_date=payload.end_date,
         synced_codes=synced_codes,
         synced_rows=synced_rows,
+        skipped_codes=skipped_codes,
         failed_codes=failed_codes,
     )
 
@@ -203,6 +205,7 @@ def get_sync_progress(run_id: str) -> SyncProgressResponse:
         completed_codes=state.completed_codes,
         synced_codes=state.synced_codes,
         synced_rows=state.synced_rows,
+        skipped_codes=state.skipped_codes,
         failed_codes=state.failed_codes,
         current_code=state.current_code,
         started_at=state.started_at,
