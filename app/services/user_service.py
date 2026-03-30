@@ -15,6 +15,10 @@ class UserService:
         self.user_repository = UserRepository(session)
 
     def create_user(self, payload: UserCreate):
+        existing_workspace_user = self.user_repository.get_single_user()
+        if existing_workspace_user is not None:
+            raise UserServiceError("Only one workspace user is supported.")
+
         existing_user = self.user_repository.get_by_identity(payload.username, payload.email)
         if existing_user is not None:
             raise UserServiceError("Username or email already exists.")
@@ -28,6 +32,9 @@ class UserService:
         self.session.flush()
         self.session.refresh(user)
         return user
+
+    def get_single_user(self):
+        return self.user_repository.get_single_user()
 
     def authenticate(self, login: str):
         user = self.user_repository.get_by_login(login)

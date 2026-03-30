@@ -16,6 +16,7 @@ import type {
   PortfolioSummary,
   Position,
   Quote,
+  SingleUserResponse,
   TradeExecution,
   StockUniverseSyncResult,
   StockLookupItem,
@@ -33,6 +34,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  getSingletonUser: () => request<SingleUserResponse>('/users/singleton'),
   loginUser: (payload: LoginPayload) =>
     request<LoginResponse>('/users/login', {
       method: 'POST',

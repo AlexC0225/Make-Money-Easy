@@ -49,26 +49,18 @@ function AppShell() {
           </nav>
 
           {activeUserId !== null ? (
-            <div className="sidebar-session">
-              <p>目前已登入工作台，可以查看持倉、策略訊號、實盤成交與回測紀錄。</p>
-              <button
-                className="ghost-button ghost-button--sidebar"
-                type="button"
-                onClick={() => {
-                  clearActiveUserId()
-                  navigate('/login')
-                }}
-              >
-                <LogOut size={16} />
-                登出
-              </button>
-            </div>
+            <button
+              className="ghost-button ghost-button--sidebar"
+              type="button"
+              onClick={() => {
+                clearActiveUserId()
+                navigate('/login')
+              }}
+            >
+              <LogOut size={16} />
+              登出
+            </button>
           ) : null}
-        </div>
-
-        <div className="sidebar-footnote">
-          <p>回測分析只看歷史績效；策略訊號頁則專心放最新訊號與實盤成交，避免資訊混雜。</p>
-          <p>實際下單前仍建議先確認策略條件、資金配置與同步資料範圍。</p>
         </div>
       </aside>
 

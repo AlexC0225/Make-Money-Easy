@@ -46,6 +46,12 @@ export type LoginResponse = {
   active_user_id: number
 }
 
+export type SingleUserResponse = {
+  user: UserProfile | null
+  active_user_id: number | null
+  requires_setup: boolean
+}
+
 export type StockLookupItem = {
   code: string
   name: string

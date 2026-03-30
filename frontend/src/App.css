@@ -98,20 +98,6 @@ body {
   margin: 0;
 }
 
-.sidebar-session {
-  display: grid;
-  gap: 0.9rem;
-  padding: 1rem;
-  border-radius: 20px;
-  background: rgba(244, 239, 230, 0.08);
-  color: rgba(244, 239, 230, 0.82);
-  line-height: 1.6;
-}
-
-.sidebar-session p {
-  margin: 0;
-}
-
 .ghost-button--sidebar {
   width: fit-content;
   background: rgba(244, 239, 230, 0.14);

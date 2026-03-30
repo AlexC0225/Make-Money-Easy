@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
-from app.schemas.user import UserCreate, UserLoginRequest, UserLoginResponse, UserWithAccountRead
+from app.schemas.user import SingleUserResponse, UserCreate, UserLoginRequest, UserLoginResponse, UserWithAccountRead
 from app.services.portfolio_service import PortfolioService
 from app.services.user_service import UserService, UserServiceError
 
@@ -40,6 +40,22 @@ def login_user(
     return UserLoginResponse(
         user=UserWithAccountRead.model_validate(user),
         active_user_id=user.id,
+    )
+
+
+@router.get("/singleton", response_model=SingleUserResponse)
+def get_singleton_user(
+    db: Session = Depends(get_db_session),
+) -> SingleUserResponse:
+    service = UserService(db)
+    user = service.get_single_user()
+    if user is None:
+        return SingleUserResponse(requires_setup=True)
+
+    return SingleUserResponse(
+        user=UserWithAccountRead.model_validate(user),
+        active_user_id=user.id,
+        requires_setup=False,
     )
 
 

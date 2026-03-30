@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { ArrowRight, ShieldCheck, Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { ArrowRight, LoaderCircle } from 'lucide-react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 
 import { api } from '../api'
@@ -13,17 +13,45 @@ export function LoginPage() {
     login: '',
   })
 
+  const singletonUserQuery = useQuery({
+    queryKey: ['singleton-user'],
+    queryFn: api.getSingletonUser,
+    retry: false,
+    staleTime: 60_000,
+  })
+
   const loginMutation = useMutation({
     mutationFn: api.loginUser,
     onSuccess: (result) => {
       setActiveUserId(result.active_user_id)
-      navigate('/dashboard')
+      navigate('/dashboard', { replace: true })
     },
   })
+
+  useEffect(() => {
+    if (activeUserId !== null) {
+      return
+    }
+
+    const singletonUser = singletonUserQuery.data?.user
+    const singletonUserId = singletonUserQuery.data?.active_user_id
+    if (!singletonUser || singletonUserId === null || singletonUserId === undefined) {
+      return
+    }
+
+    setForm((current) => ({
+      login: current.login || singletonUser.email,
+    }))
+    setActiveUserId(singletonUserId)
+    navigate('/dashboard', { replace: true })
+  }, [activeUserId, navigate, singletonUserQuery.data])
 
   if (activeUserId !== null) {
     return <Navigate to="/dashboard" replace />
   }
+
+  const requiresSetup = singletonUserQuery.data?.requires_setup ?? false
+  const isCheckingSingleton = singletonUserQuery.isPending
 
   return (
     <div className="auth-shell">
@@ -31,22 +59,7 @@ export function LoginPage() {
         <div className="auth-hero-copy">
           <p className="hero-kicker">Operator Login</p>
           <h1>登入你的自動交易工作區</h1>
-          <p>
-            進入後可以直接查看資產配置、watchlist、預設同步股票池與策略執行紀錄，維持整個研究與交易流程一致。
-          </p>
-        </div>
-
-        <div className="auth-highlight-grid">
-          <article className="auth-highlight-card">
-            <ShieldCheck size={18} />
-            <strong>固定工作區入口</strong>
-            <p>使用同一個帳號登入，保留 watchlist、資產設定與同步節奏。</p>
-          </article>
-          <article className="auth-highlight-card">
-            <Sparkles size={18} />
-            <strong>同步範圍透明</strong>
-            <p>預設同步會清楚顯示 watchlist 與科技、金融產業股票池的組成，不再是黑盒子。</p>
-          </article>
+          <p>這個系統預設只服務一位使用者；如果工作區已經存在，系統會自動帶入並直接進入工作台。</p>
         </div>
       </section>
 
@@ -54,45 +67,71 @@ export function LoginPage() {
         <div className="auth-card">
           <div className="auth-card-head">
             <p className="panel-kicker">Workspace Access</p>
-            <h2>登入</h2>
-            <p>輸入使用者名稱或 Email 即可進入工作區。</p>
+            <h2>{requiresSetup ? '建立工作區' : '登入'}</h2>
+            <p>
+              {requiresSetup
+                ? '目前還沒有任何使用者，先建立工作區後，之後重新開啟服務就會自動帶入。'
+                : '系統啟動時會檢查唯一使用者；若已存在，會自動登入。'}
+            </p>
           </div>
 
-          <form
-            className="stack-form"
-            onSubmit={(event) => {
-              event.preventDefault()
-              loginMutation.mutate(form)
-            }}
-          >
-            <label>
-              帳號
-              <input
-                value={form.login}
-                onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))}
-                placeholder="alex 或 alex@example.com"
-                autoComplete="username"
-                required
-              />
-            </label>
-
-            {loginMutation.error ? <p className="error-text">{loginMutation.error.message}</p> : null}
-
-            <div className="inline-actions">
-              <button className="primary-button" type="submit" disabled={loginMutation.isPending}>
-                <ArrowRight size={16} />
-                進入工作台
-              </button>
-              <Link to="/setup" className="ghost-button">
-                建立新工作區
-              </Link>
+          {isCheckingSingleton ? (
+            <div className="stack-form">
+              <p className="muted-text">正在檢查目前工作區設定...</p>
+              <div className="inline-actions">
+                <button className="primary-button" type="button" disabled>
+                  <LoaderCircle className="spinning-icon" size={16} />
+                  載入中
+                </button>
+              </div>
             </div>
-          </form>
+          ) : requiresSetup ? (
+            <div className="stack-form">
+              <p className="muted-text">第一次使用請先輸入帳號、Email 與初始資金建立唯一工作區。</p>
+              <div className="inline-actions">
+                <Link to="/setup" className="primary-button">
+                  <ArrowRight size={16} />
+                  前往建立工作區
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <form
+              className="stack-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                loginMutation.mutate(form)
+              }}
+            >
+              <label>
+                帳號
+                <input
+                  value={form.login}
+                  onChange={(event) => setForm((current) => ({ ...current, login: event.target.value }))}
+                  placeholder="alex 或 alex@example.com"
+                  autoComplete="username"
+                  required
+                />
+              </label>
+
+              {loginMutation.error ? <p className="error-text">{loginMutation.error.message}</p> : null}
+
+              <div className="inline-actions">
+                <button className="primary-button" type="submit" disabled={loginMutation.isPending}>
+                  <ArrowRight size={16} />
+                  進入工作台
+                </button>
+                <Link to="/setup" className="ghost-button">
+                  工作區設定
+                </Link>
+              </div>
+            </form>
+          )}
         </div>
 
         <div className="auth-note">
-          <strong>第一次使用</strong>
-          <p>先建立工作區與初始資產，之後就能用帳號直接登入，不需要再手動指定使用者 ID。</p>
+          <strong>單一使用者模式</strong>
+          <p>資料庫只會保留一筆使用者資料；如果這筆資料已存在，登入頁會自動帶入，不需要重複建立帳號。</p>
         </div>
       </section>
     </div>

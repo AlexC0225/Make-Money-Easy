@@ -17,6 +17,10 @@ class UserRepository:
         statement = select(User).order_by(User.id.asc())
         return list(self.session.scalars(statement))
 
+    def get_single_user(self) -> User | None:
+        statement = select(User).order_by(User.id.asc()).limit(1)
+        return self.session.scalar(statement)
+
     def get_by_identity(self, username: str, email: str) -> User | None:
         statement = select(User).where(or_(User.username == username, User.email == email))
         return self.session.scalar(statement)

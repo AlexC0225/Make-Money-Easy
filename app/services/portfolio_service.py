@@ -67,7 +67,7 @@ class PortfolioService:
         statement = select(Account).where(Account.user_id == user_id)
         account = self.session.scalar(statement)
         if account is None:
-            raise ValueError("找不到對應的帳戶")
+            raise ValueError("Account not found.")
         return account
 
     def bootstrap_portfolio(
@@ -76,13 +76,15 @@ class PortfolioService:
         twstock_client: TwStockClient,
     ) -> PortfolioBootstrapResponse:
         if payload.user_id is None:
-            user = UserService(self.session).create_user(payload)
+            existing_user = self.user_repository.get_single_user()
+            user = existing_user if existing_user is not None else UserService(self.session).create_user(payload)
         else:
             user = self.user_repository.get_user(payload.user_id)
             if user is None:
-                raise ValueError("找不到要更新的使用者")
-            user.username = payload.username
-            user.email = payload.email
+                raise ValueError("User not found.")
+
+        user.username = payload.username
+        user.email = payload.email
 
         account = self.user_repository.get_account_by_user_id(user.id)
         if account is None:

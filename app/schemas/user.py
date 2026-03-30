@@ -41,3 +41,9 @@ class UserWithAccountRead(UserRead):
 class UserLoginResponse(BaseModel):
     user: UserWithAccountRead
     active_user_id: int
+
+
+class SingleUserResponse(BaseModel):
+    user: UserWithAccountRead | None = None
+    active_user_id: int | None = None
+    requires_setup: bool

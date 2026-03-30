@@ -27,10 +27,12 @@ dist/
 *.egg-info/
 
 # Database and local data
-# data/*.db
-# data/*.db-journal
-# data/*.sqlite
-# data/*.sqlite3
+data/*.db
+data/*.db-journal
+data/*.sqlite
+data/*.sqlite3
+data/backups/
+data/logs/
 
 # Frontend
 frontend/node_modules/
