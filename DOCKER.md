@@ -29,5 +29,7 @@ docker compose down
 - The frontend runs with Vite dev server inside Docker.
 - The backend runs with FastAPI + Uvicorn inside Docker.
 - Source code is mounted into the containers, so code changes should hot reload.
-- SQLite uses a bind mount from local `./data` to container `/app/data`.
-- The database file used in Docker is `/app/data/app.db`, so local `data/app.db` and the container share the same file.
+- Local development can keep using SQLite through `.env` with `MME_DATABASE_URL=sqlite:///./data/app.db`.
+- Docker uses a dedicated PostgreSQL container with `MME_DATABASE_URL=postgresql+psycopg://mme:mme@postgres:5432/mme`.
+- Docker still mounts local `./data` to `/app/data` for job logs and other local files.
+- PostgreSQL data is stored in the named Docker volume `postgres_data`.
