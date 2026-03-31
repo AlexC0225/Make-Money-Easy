@@ -1,14 +1,17 @@
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.db.models.stock import Stock
 from app.db.models.watchlist import WatchlistItem
 from app.db.repositories.stock_repository import StockRepository
 from app.services.sync_progress_service import SyncProgressService
+from app.services.trading_calendar_service import TradingCalendarService, TradingCalendarServiceError
 from app.services.twstock_client import TwStockClient
 
 
@@ -56,6 +59,7 @@ class MarketDataService:
     DEFAULT_MINIMUM_RECENT_DAILY_TURNOVER = 100_000_000.0
     DEFAULT_RECENT_TURNOVER_LOOKBACK_DAYS = 20
     HISTORY_COVERAGE_MAX_GAP_DAYS = 7
+    DAILY_HISTORY_READY_TIME = time(hour=18, minute=0)
 
     def __init__(
         self,
@@ -66,6 +70,8 @@ class MarketDataService:
         self.twstock_client = twstock_client
         self.stock_repository = StockRepository(session)
         self.sync_progress_service = SyncProgressService()
+        self.trading_calendar_service = TradingCalendarService()
+        self.timezone = ZoneInfo(get_settings().scheduler_timezone)
 
     def sync_stock_universe(self, progress_run_id: str | None = None) -> int:
         stocks = self.twstock_client.list_stock_universe()
@@ -337,11 +343,10 @@ class MarketDataService:
         fetch_history: Callable[[], list],
     ) -> HistorySyncResult:
         stock = self.stock_repository.get_by_code(code)
-        if stock is not None and self.stock_repository.has_daily_price_coverage(
+        if stock is not None and self._has_complete_trading_day_coverage(
             stock.id,
             start_date=start_date,
             end_date=end_date,
-            max_gap_days=self.HISTORY_COVERAGE_MAX_GAP_DAYS,
         ):
             return HistorySyncResult(status="skipped", synced_rows=0)
 
@@ -349,4 +354,43 @@ class MarketDataService:
         history = fetch_history()
         stock = self.stock_repository.upsert_stock(**metadata)
         synced_rows = self.stock_repository.upsert_daily_prices(stock_id=stock.id, prices=history)
+        if synced_rows == 0:
+            return HistorySyncResult(status="skipped", synced_rows=0)
         return HistorySyncResult(status="synced", synced_rows=synced_rows)
+
+    def _has_complete_trading_day_coverage(self, stock_id: int, start_date: date, end_date: date) -> bool:
+        effective_end_date = self._resolve_effective_coverage_end_date(end_date)
+        if effective_end_date < start_date:
+            return False
+
+        cached_prices = self.stock_repository.get_daily_prices(
+            stock_id,
+            start_date=start_date,
+            end_date=effective_end_date,
+        )
+        if not cached_prices:
+            return False
+
+        cached_trade_dates = {price.trade_date for price in cached_prices}
+        try:
+            current = start_date
+            while current <= effective_end_date:
+                if self.trading_calendar_service.is_trading_day(current) and current not in cached_trade_dates:
+                    return False
+                current += timedelta(days=1)
+            return True
+        except TradingCalendarServiceError:
+            return self.stock_repository.has_daily_price_coverage(
+                stock_id,
+                start_date=start_date,
+                end_date=effective_end_date,
+                max_gap_days=self.HISTORY_COVERAGE_MAX_GAP_DAYS,
+            )
+
+    def _resolve_effective_coverage_end_date(self, requested_end_date: date) -> date:
+        now = datetime.now(self.timezone)
+        today = now.date()
+        effective_end_date = min(requested_end_date, today)
+        if effective_end_date == today and now.time() < self.DAILY_HISTORY_READY_TIME:
+            return today - timedelta(days=1)
+        return effective_end_date

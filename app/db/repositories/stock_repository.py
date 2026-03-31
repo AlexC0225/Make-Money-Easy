@@ -135,9 +135,23 @@ class StockRepository:
                 DailyPrice.trade_date == item.trade_date,
             )
             daily_price = self.session.scalar(statement)
+            has_changes = False
             if daily_price is None:
                 daily_price = DailyPrice(stock_id=stock_id, trade_date=item.trade_date)
                 self.session.add(daily_price)
+                has_changes = True
+            else:
+                has_changes = any(
+                    (
+                        daily_price.open_price != item.open_price,
+                        daily_price.high_price != item.high_price,
+                        daily_price.low_price != item.low_price,
+                        daily_price.close_price != item.close_price,
+                        daily_price.volume != item.volume,
+                        daily_price.turnover != item.turnover,
+                        daily_price.transaction_count != item.transaction_count,
+                    )
+                )
 
             daily_price.open_price = item.open_price
             daily_price.high_price = item.high_price
@@ -146,7 +160,8 @@ class StockRepository:
             daily_price.volume = item.volume
             daily_price.turnover = item.turnover
             daily_price.transaction_count = item.transaction_count
-            synced_count += 1
+            if has_changes:
+                synced_count += 1
 
         self.session.flush()
         return synced_count

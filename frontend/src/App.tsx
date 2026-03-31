@@ -134,7 +134,7 @@ function AppShell() {
       : undefined
   const syncSummary =
     syncProgress && syncProgress.total_codes > 0
-      ? `已完成 ${syncProgress.completed_codes} / ${syncProgress.total_codes}，成功 ${syncProgress.synced_codes}，失敗 ${syncProgress.failed_codes.length}`
+      ? `已完成 ${syncProgress.completed_codes} / ${syncProgress.total_codes}，新增 ${syncProgress.synced_codes}，跳過 ${syncProgress.skipped_codes.length}，失敗 ${syncProgress.failed_codes.length}`
       : '正在向後端建立同步狀態，切換頁面不會中斷更新。'
   const syncCaption = syncCurrentCode
     ? `目前正在同步 ${syncCurrentCode}。`

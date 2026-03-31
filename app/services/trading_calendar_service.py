@@ -23,10 +23,11 @@ class TradingCalendarService:
         if cached is not None:
             return cached
 
+        roc_year = year - 1911
         try:
             response = requests.get(
                 self.HOLIDAY_API_URL,
-                params={"response": "json", "queryYear": str(year)},
+                params={"response": "json", "queryYear": str(roc_year)},
                 timeout=self.REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()

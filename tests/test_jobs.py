@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
@@ -6,8 +6,40 @@ from sqlalchemy.exc import OperationalError
 from app.api.deps import get_twstock_client
 from app.db.models.stock import Stock
 from app.db.session import get_session_factory
+from app.schemas.stock import HistoricalPriceRead
 from app.services.market_data_service import MarketDataService
 from tests.test_stocks import FakeTwStockClient
+
+
+class TradingDayOnlyHistoryRangeTwStockClient(FakeTwStockClient):
+    history_range_calls = 0
+
+    def get_history_range(self, code: str, start_date: date, end_date: date):
+        type(self).history_range_calls += 1
+        rows = []
+        current = start_date
+        close_price = 100.0
+        long_holiday = {date(2026, 2, day) for day in range(16, 21)}
+
+        while current <= end_date:
+            is_weekend = current.weekday() >= 5
+            if not is_weekend and current not in long_holiday:
+                rows.append(
+                    HistoricalPriceRead(
+                        trade_date=current,
+                        open_price=close_price - 1,
+                        high_price=close_price + 1,
+                        low_price=close_price - 2,
+                        close_price=close_price,
+                        volume=100_000,
+                        turnover=close_price * 100_000,
+                        transaction_count=1000,
+                    )
+                )
+                close_price += 1
+            current += timedelta(days=1)
+
+        return rows
 
 
 def test_sync_stock_universe_job(client):
@@ -397,6 +429,41 @@ def test_sync_progress_tracks_skipped_codes_after_history_range_sync(client):
     assert progress_payload["failed_codes"] == []
 
 
+def test_sync_history_range_marks_noop_refetch_as_skipped(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    first_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+    assert first_response.status_code == 200
+
+    monkeypatch.setattr(
+        "app.services.market_data_service.MarketDataService._has_complete_trading_day_coverage",
+        lambda self, stock_id, start_date, end_date: False,
+    )
+
+    second_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-26",
+        },
+    )
+
+    assert second_response.status_code == 200
+    payload = second_response.json()
+    assert payload["synced_codes"] == 0
+    assert payload["synced_rows"] == 0
+    assert payload["skipped_codes"] == ["2330"]
+    assert payload["failed_codes"] == []
+
+
 def test_sync_history_range_returns_503_when_database_is_busy(client, monkeypatch):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
 
@@ -419,3 +486,76 @@ def test_sync_history_range_returns_503_when_database_is_busy(client, monkeypatc
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Database is busy. Please retry the sync in a few seconds."
+
+
+def test_sync_history_range_treats_same_day_end_date_as_already_covered_before_daily_close(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
+
+    first_response = client.post(
+        "/api/v1/jobs/sync/history-range",
+        json={
+            "codes": ["2330"],
+            "start_date": "2026-03-24",
+            "end_date": "2026-03-30",
+        },
+    )
+    assert first_response.status_code == 200
+
+    class FakeDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 3, 31, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr("app.services.market_data_service.datetime", FakeDateTime)
+    monkeypatch.setattr(
+        "app.services.trading_calendar_service.TradingCalendarService._get_holiday_dates",
+        lambda self, year: set(),
+    )
+
+    session = get_session_factory()()
+    try:
+        service = MarketDataService(session, FakeTwStockClient())
+        _, synced_codes, synced_rows, skipped_codes, failed_codes = service.sync_history_range_batch(
+            codes=["2330"],
+            start_date=date(2026, 3, 24),
+            end_date=date(2026, 3, 31),
+        )
+
+        assert synced_codes == 0
+        assert synced_rows == 0
+        assert skipped_codes == ["2330"]
+        assert failed_codes == []
+    finally:
+        session.close()
+
+
+def test_sync_history_range_skips_existing_data_across_long_market_holiday(client, monkeypatch):
+    client.app.dependency_overrides[get_twstock_client] = TradingDayOnlyHistoryRangeTwStockClient
+    TradingDayOnlyHistoryRangeTwStockClient.history_range_calls = 0
+
+    long_holiday = {date(2026, 2, day) for day in range(16, 21)}
+    monkeypatch.setattr(
+        "app.services.trading_calendar_service.TradingCalendarService._get_holiday_dates",
+        lambda self, year: long_holiday if year == 2026 else set(),
+    )
+
+    payload = {
+        "codes": ["2330"],
+        "start_date": "2025-10-01",
+        "end_date": "2026-03-31",
+    }
+
+    first_response = client.post("/api/v1/jobs/sync/history-range", json=payload)
+
+    assert first_response.status_code == 200
+    assert TradingDayOnlyHistoryRangeTwStockClient.history_range_calls == 1
+
+    second_response = client.post("/api/v1/jobs/sync/history-range", json=payload)
+
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert second_payload["synced_codes"] == 0
+    assert second_payload["synced_rows"] == 0
+    assert second_payload["skipped_codes"] == ["2330"]
+    assert second_payload["failed_codes"] == []
+    assert TradingDayOnlyHistoryRangeTwStockClient.history_range_calls == 1

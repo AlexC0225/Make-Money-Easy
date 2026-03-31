@@ -328,10 +328,26 @@ export function SetupPage() {
     syncedRangeCodes.length > 8
       ? `${syncedRangeCodes.slice(0, 8).join('、')} 等 ${syncedRangeCodes.length} 檔`
       : syncedRangeCodes.join('、')
+  const syncHistoryRangeResult = syncHistoryRangeMutation.data
+  const syncedRangeRowCount = syncHistoryRangeResult?.synced_rows ?? 0
+  const syncedRangeCodeCount = syncHistoryRangeResult?.synced_codes ?? 0
+  const skippedRangeCount = syncHistoryRangeResult?.skipped_codes.length ?? 0
+  const failedRangeCount = syncHistoryRangeResult?.failed_codes.length ?? 0
+  const skippedAllRangeCodes =
+    syncHistoryRangeResult !== undefined &&
+    syncedRangeRowCount === 0 &&
+    syncedRangeCodeCount === 0 &&
+    skippedRangeCount > 0 &&
+    failedRangeCount === 0
+  const syncHistoryRangeResultClassName = skippedAllRangeCodes ? 'muted-text' : 'success-text'
+  const syncHistoryRangeResultMessage = skippedAllRangeCodes
+    ? `指定區間已有資料，本次未重複同步，已跳過 ${skippedRangeCount} 檔標的。模式：${syncedRangeSelectionLabel}。股票：${syncedRangeCodeSummary || '無'}。`
+    : `已同步 ${syncedRangeRowCount} 筆資料，涵蓋 ${syncedRangeCodeCount} 檔標的。已跳過 ${skippedRangeCount} 檔已存在區間資料的標的。模式：${syncedRangeSelectionLabel}。股票：${syncedRangeCodeSummary || '無'}。`
 
   const syncProgress = syncProgressQuery.data
   const syncStatus = syncProgress?.status ?? (syncProgressQuery.isPending ? 'running' : undefined)
-  const isSyncBusy = syncStatus === 'running' || syncStocksMutation.isPending || syncHistoryRangeMutation.isPending
+  const isSyncBusy =
+    syncProgress?.status === 'running' || syncStocksMutation.isPending || syncHistoryRangeMutation.isPending
   const showSyncProgressCard =
     activeSyncRun !== null &&
     (syncProgress !== undefined ||
@@ -543,7 +559,7 @@ export function SetupPage() {
               <div className="setup-progress-meta">
                 <span>耗時 {formatElapsedTime(syncElapsedSeconds)}</span>
                 <span>完成 {syncProgressSummaryText}</span>
-                <span>成功 {syncProgressSuccessful}</span>
+                <span>新增 {syncProgressSuccessful}</span>
                 <span>跳過 {syncProgressSkipped}</span>
                 <span>失敗 {syncProgressFailed}</span>
               </div>
@@ -691,13 +707,7 @@ export function SetupPage() {
 
           {syncTargetsQuery.error ? <p className="error-text">{syncTargetsQuery.error.message}</p> : null}
           {syncStocksMutation.data ? <p className="success-text">股票池已更新，共整理 {syncStocksMutation.data.synced_count} 檔標的。</p> : null}
-          {syncHistoryRangeMutation.data ? (
-            <p className="success-text">
-              已同步 {syncHistoryRangeMutation.data.synced_rows} 筆資料，涵蓋 {syncHistoryRangeMutation.data.synced_codes} 檔標的。
-              已跳過 {syncHistoryRangeMutation.data.skipped_codes.length} 檔已存在區間資料的標的。
-              模式：{syncedRangeSelectionLabel}。股票：{syncedRangeCodeSummary || '無'}。
-            </p>
-          ) : null}
+          {syncHistoryRangeResult ? <p className={syncHistoryRangeResultClassName}>{syncHistoryRangeResultMessage}</p> : null}
           {skippedRangeCodes.length > 0 ? <p className="muted-text">已跳過標的：{skippedRangeCodes.join('、')}</p> : null}
           {failedRangeCodes.length > 0 ? <p className="error-text">失敗標的：{failedRangeCodes.join('、')}</p> : null}
           {syncStocksMutation.error ? <p className="error-text">{syncStocksMutation.error.message}</p> : null}
