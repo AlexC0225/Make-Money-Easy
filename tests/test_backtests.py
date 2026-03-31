@@ -157,6 +157,84 @@ def test_run_backtest_uses_default_list_when_code_is_blank(client):
     assert sorted(payload["portfolio_codes"]) == ["2317", "2330"]
 
 
+def test_run_backtest_uses_daily_strategy_pool_when_user_id_is_provided(client):
+    _seed_backtest_stocks(["2330"])
+
+    bootstrap_response = client.post(
+        "/api/v1/portfolio/bootstrap",
+        json={
+            "username": "backtest-user",
+            "email": "backtest@example.com",
+            "initial_cash": 1_000_000,
+            "available_cash": 1_000_000,
+            "positions": [],
+        },
+    )
+    assert bootstrap_response.status_code == 200
+    user_id = bootstrap_response.json()["user_id"]
+
+    session = get_session_factory()()
+    try:
+        stock = Stock(
+            code="0050",
+            name="ETF 0050",
+            market="TSEC",
+            industry="ETF",
+            is_active=True,
+        )
+        session.add(stock)
+        session.flush()
+
+        start_date = date(2025, 1, 1)
+        for offset in range(240):
+            trade_date = start_date + timedelta(days=offset)
+            close_price = 120.0 + (offset * 0.2)
+            volume = 1_000_000
+            session.add(
+                DailyPrice(
+                    stock_id=stock.id,
+                    trade_date=trade_date,
+                    open_price=close_price - 1,
+                    high_price=close_price + 2,
+                    low_price=close_price - 2,
+                    close_price=close_price,
+                    volume=volume,
+                    turnover=close_price * volume,
+                    transaction_count=5_000 + offset,
+                )
+            )
+
+        session.commit()
+    finally:
+        session.close()
+
+    watchlist_response = client.post(
+        "/api/v1/watchlist",
+        json={"user_id": user_id, "code": "0050", "note": "watchlist only"},
+    )
+    assert watchlist_response.status_code == 201
+
+    response = client.post(
+        "/api/v1/backtests/run",
+        json={
+            "user_id": user_id,
+            "code": "",
+            "strategy_name": "connors_rsi2_long",
+            "start_date": "2025-01-01",
+            "end_date": "2025-08-28",
+            "initial_cash": 1_000_000,
+            "position_sizing_mode": "cash_percent",
+            "lot_size": 1000,
+            "cash_allocation_pct": 20,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["is_portfolio"] is True
+    assert sorted(payload["portfolio_codes"]) == ["0050", "2330"]
+
+
 def test_run_backtest_respects_custom_max_open_positions(client, monkeypatch):
     _seed_backtest_stocks(["2330", "2317"])
     monkeypatch.setattr(
@@ -223,6 +301,7 @@ def test_run_backtest_persists_after_concurrent_write(client, monkeypatch):
         service = BacktestService(session)
         result = service.run_backtest(
             BacktestSpec(
+                user_id=None,
                 codes=["2330"],
                 strategy_name="connors_rsi2_long",
                 start_date=date(2025, 1, 1),

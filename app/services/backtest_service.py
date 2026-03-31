@@ -31,6 +31,7 @@ class BacktestServiceError(Exception):
 
 @dataclass
 class BacktestSpec:
+    user_id: int | None
     codes: list[str]
     strategy_name: str
     start_date: date
@@ -60,7 +61,7 @@ class BacktestService:
         self.strategy_service = StrategyService(session)
 
     def run_backtest(self, payload: BacktestSpec) -> BacktestResultRead:
-        codes = self._resolve_backtest_codes(payload.codes)
+        codes = self._resolve_backtest_codes(payload.codes, user_id=payload.user_id)
         payload.codes = codes
 
         strategy = self.strategy_service.get_strategy(payload.strategy_name)
@@ -819,13 +820,13 @@ class BacktestService:
             return max(index, minimum_required_history - 1)
         raise BacktestServiceError(f"No historical prices found in the selected date range for {code}.")
 
-    def _resolve_backtest_codes(self, codes: list[str]) -> list[str]:
+    def _resolve_backtest_codes(self, codes: list[str], user_id: int | None = None) -> list[str]:
         normalized = [code.strip().upper() for code in codes if code.strip()]
         if normalized:
             return normalized
 
         market_data_service = MarketDataService(self.session, TwStockClient())
-        default_codes = market_data_service.list_default_tradable_pool_codes()
+        default_codes = market_data_service.resolve_trading_target_codes(user_id=user_id)
         resolved_codes: list[str] = []
         seen: set[str] = set()
         for code in default_codes:

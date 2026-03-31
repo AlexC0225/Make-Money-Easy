@@ -257,6 +257,7 @@ export type BacktestResult = {
 }
 
 export type BacktestRunPayload = {
+  user_id?: number
   code: string
   strategy_name: string
   start_date: string

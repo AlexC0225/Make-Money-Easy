@@ -32,6 +32,7 @@ def run_backtest(
 ) -> BacktestResultRead:
     service = BacktestService(db)
     spec = BacktestSpec(
+        user_id=payload.user_id,
         codes=_normalize_codes(payload.code),
         strategy_name=payload.strategy_name,
         start_date=payload.start_date,

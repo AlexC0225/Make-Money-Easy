@@ -6,7 +6,7 @@ import { BacktestEquityChart } from '../components/BacktestEquityChart'
 import { BacktestPriceChart } from '../components/BacktestPriceChart'
 import { Panel } from '../components/Panel'
 import { clsx, formatCurrency, formatPercent } from '../lib/format'
-import { getBacktestStrategy, setBacktestStrategy } from '../lib/storage'
+import { getActiveUserId, getBacktestStrategy, setBacktestStrategy } from '../lib/storage'
 import type { BacktestResult, BacktestRunPayload, BacktestTrade } from '../types/api'
 
 function describeStrategy(strategyName?: string) {
@@ -57,6 +57,7 @@ function summarizeTarget(result: BacktestResult) {
 }
 
 export function BacktestsPage() {
+  const activeUserId = getActiveUserId()
   const queryClient = useQueryClient()
   const [form, setForm] = useState<BacktestRunPayload>(() => createInitialBacktestForm())
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
@@ -67,8 +68,8 @@ export function BacktestsPage() {
   })
 
   const defaultTargetsQuery = useQuery({
-    queryKey: ['backtest-default-targets'],
-    queryFn: () => api.getSyncTargets(),
+    queryKey: ['backtest-default-targets', activeUserId],
+    queryFn: () => api.getSyncTargets(activeUserId ?? undefined),
     staleTime: 60_000,
     retry: false,
   })
@@ -86,7 +87,11 @@ export function BacktestsPage() {
   }, [form.strategy_name, strategyCatalogQuery.data])
 
   const runBacktestMutation = useMutation({
-    mutationFn: api.runBacktest,
+    mutationFn: (payload: BacktestRunPayload) =>
+      api.runBacktest({
+        ...payload,
+        user_id: activeUserId ?? undefined,
+      }),
     onSuccess: async (result) => {
       setBacktestStrategy(result.strategy_name)
       setSelectedBacktestId(result.id)
@@ -125,7 +130,12 @@ export function BacktestsPage() {
   const executionTimingLabel =
     highlightedStrategyMeta?.execution_timing === 'next_market_open' ? '隔日開盤執行' : '當日收盤執行'
   const targetSummary = highlightedResult ? summarizeTarget(highlightedResult) : ''
-  const defaultPoolCodes = defaultTargetsQuery.data?.tradable_pool_codes ?? defaultTargetsQuery.data?.default_pool_codes ?? []
+  const defaultPoolCodes = Array.from(
+    new Set([
+      ...(defaultTargetsQuery.data?.watchlist_codes ?? []),
+      ...(defaultTargetsQuery.data?.tradable_pool_codes ?? defaultTargetsQuery.data?.default_pool_codes ?? []),
+    ]),
+  )
   const defaultPoolPreview = defaultPoolCodes.slice(0, 8).join(', ')
 
   return (

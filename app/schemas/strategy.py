@@ -106,6 +106,7 @@ class BacktestResultRead(BaseModel):
 
 
 class BacktestRunRequest(BaseModel):
+    user_id: int | None = Field(default=None, ge=1)
     code: str = Field(default="")
     strategy_name: str = Field(min_length=1)
     start_date: date

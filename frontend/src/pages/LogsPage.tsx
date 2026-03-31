@@ -6,7 +6,7 @@ import { BacktestEquityChart } from '../components/BacktestEquityChart'
 import { BacktestPriceChart } from '../components/BacktestPriceChart'
 import { Panel } from '../components/Panel'
 import { clsx, formatCurrency, formatPercent } from '../lib/format'
-import { getBacktestStrategy, setBacktestStrategy } from '../lib/storage'
+import { getActiveUserId, getBacktestStrategy, setBacktestStrategy } from '../lib/storage'
 import type { BacktestResult, BacktestRunPayload, BacktestTrade } from '../types/api'
 
 type SignalTab = 'SELL' | 'HOLD' | 'BUY'
@@ -71,6 +71,7 @@ function summarizeTarget(result: BacktestResult) {
 }
 
 export function LogsPage() {
+  const activeUserId = getActiveUserId()
   const queryClient = useQueryClient()
   const [form, setForm] = useState<BacktestRunPayload>(() => createInitialBacktestForm())
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
@@ -94,7 +95,11 @@ export function LogsPage() {
   }, [form.strategy_name, strategyCatalogQuery.data])
 
   const runBacktestMutation = useMutation({
-    mutationFn: api.runBacktest,
+    mutationFn: (payload: BacktestRunPayload) =>
+      api.runBacktest({
+        ...payload,
+        user_id: activeUserId ?? undefined,
+      }),
     onSuccess: async (result) => {
       setBacktestStrategy(result.strategy_name)
       setSelectedBacktestId(result.id)
