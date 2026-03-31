@@ -12,6 +12,7 @@ import {
 import { Link, Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { api } from './api'
+import { isApiError } from './api/client'
 import {
   clearActiveSyncRun,
   clearActiveUserId,
@@ -62,6 +63,14 @@ function getSyncBannerTitle(activeSyncRun: ActiveSyncRun, status?: 'running' | '
   return `${activeSyncRun.label}進行中`
 }
 
+function isSyncLookupGracePeriod(activeSyncRun: ActiveSyncRun | null) {
+  if (!activeSyncRun) {
+    return false
+  }
+
+  return Date.now() - new Date(activeSyncRun.started_at).getTime() < 15_000
+}
+
 function RequireSession({ children }: { children: ReactElement }) {
   return getActiveUserId() === null ? <Navigate to="/login" replace /> : children
 }
@@ -95,8 +104,22 @@ function AppShell() {
     refetchIntervalInBackground: true,
   })
 
+  useEffect(() => {
+    if (!activeSyncRun || !syncProgressQuery.error) {
+      return
+    }
+
+    if (
+      isApiError(syncProgressQuery.error) &&
+      syncProgressQuery.error.status === 404 &&
+      !isSyncLookupGracePeriod(activeSyncRun)
+    ) {
+      clearActiveSyncRun()
+    }
+  }, [activeSyncRun, syncProgressQuery.error])
+
   const syncProgress = syncProgressQuery.data
-  const syncStatus = syncProgress?.status
+  const syncStatus = syncProgress?.status ?? (syncProgressQuery.isPending ? 'running' : undefined)
   const syncFinishedAt = syncProgress?.finished_at
   const syncErrorMessage = syncProgress?.error_message
   const syncCurrentCode = syncProgress?.current_code
@@ -104,7 +127,7 @@ function AppShell() {
     activeSyncRun !== null &&
     (syncProgress !== undefined ||
       syncProgressQuery.isPending ||
-      (syncProgressQuery.error && Date.now() - new Date(activeSyncRun.started_at).getTime() < 15_000))
+      (syncProgressQuery.error && isSyncLookupGracePeriod(activeSyncRun)))
   const syncProgressPercent =
     syncProgress && syncProgress.total_codes > 0
       ? Math.round((syncProgress.completed_codes / syncProgress.total_codes) * 100)

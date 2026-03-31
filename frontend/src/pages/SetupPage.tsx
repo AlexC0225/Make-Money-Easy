@@ -4,6 +4,7 @@ import { ArrowRight, LoaderCircle, RefreshCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import { api } from '../api'
+import { isApiError } from '../api/client'
 import { Panel } from '../components/Panel'
 import { PositionEditor } from '../components/PositionEditor'
 import { formatCurrency } from '../lib/format'
@@ -106,6 +107,14 @@ function getProgressStatusLabel(status?: 'running' | 'completed' | 'failed') {
   }
 
   return '進行中'
+}
+
+function isSyncLookupGracePeriod(activeSyncRun: ActiveSyncRun | null) {
+  if (!activeSyncRun) {
+    return false
+  }
+
+  return Date.now() - new Date(activeSyncRun.started_at).getTime() < 15_000
 }
 
 export function SetupPage() {
@@ -238,6 +247,20 @@ export function SetupPage() {
   })
 
   useEffect(() => {
+    if (!activeSyncRun || !syncProgressQuery.error) {
+      return
+    }
+
+    if (
+      isApiError(syncProgressQuery.error) &&
+      syncProgressQuery.error.status === 404 &&
+      !isSyncLookupGracePeriod(activeSyncRun)
+    ) {
+      clearActiveSyncRun()
+    }
+  }, [activeSyncRun, syncProgressQuery.error])
+
+  useEffect(() => {
     if (!activeSyncRun) {
       setSyncElapsedSeconds(0)
       return
@@ -307,8 +330,13 @@ export function SetupPage() {
       : syncedRangeCodes.join('、')
 
   const syncProgress = syncProgressQuery.data
-  const syncStatus = syncProgress?.status ?? (activeSyncRun ? 'running' : undefined)
+  const syncStatus = syncProgress?.status ?? (syncProgressQuery.isPending ? 'running' : undefined)
   const isSyncBusy = syncStatus === 'running' || syncStocksMutation.isPending || syncHistoryRangeMutation.isPending
+  const showSyncProgressCard =
+    activeSyncRun !== null &&
+    (syncProgress !== undefined ||
+      syncProgressQuery.isPending ||
+      (syncProgressQuery.error && isSyncLookupGracePeriod(activeSyncRun)))
   const syncProgressTotal =
     syncProgress?.total_codes ??
     (activeSyncRun?.job_name === 'sync-history-range' ? syncTargetCount : syncTargetsQuery.data?.codes.length ?? 0)
@@ -490,7 +518,7 @@ export function SetupPage() {
 
       <Panel title="資料同步" subtitle="Market Data">
         <div className="stack-form">
-          {activeSyncRun ? (
+          {showSyncProgressCard ? (
             <div className="setup-progress-card" aria-live="polite">
               <div className="setup-progress-head">
                 <div>
