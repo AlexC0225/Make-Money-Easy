@@ -13,6 +13,15 @@ class StockUniverseSyncResponse(BaseModel):
     synced_count: int
 
 
+class AutomationRunResponse(BaseModel):
+    skipped: bool
+    reason: str | None = None
+    processed_users: int
+    applied_users: int
+    failed_users: list[int] = Field(default_factory=list)
+    execution_details: list[dict[str, object]] = Field(default_factory=list)
+
+
 class HistorySyncRequest(BaseModel):
     codes: list[str] | None = None
     user_id: int | None = Field(default=None, ge=1)

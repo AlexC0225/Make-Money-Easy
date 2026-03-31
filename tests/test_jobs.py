@@ -24,6 +24,43 @@ def test_sync_stock_universe_job(client):
     assert len(stocks) == 2
 
 
+def test_run_workspace_automation_job_route(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.jobs.run_daily_workspace_automation_job",
+        lambda: {
+            "skipped": False,
+            "reason": None,
+            "processed_users": 1,
+            "applied_users": 1,
+            "failed_users": [],
+            "execution_details": [
+                {
+                    "user_id": 1,
+                    "code": "2330",
+                    "strategy_name": "connors_rsi2_long",
+                    "execution": {
+                        "applied": True,
+                        "action": "BUY",
+                        "quantity": 1000,
+                        "status": "APPLIED",
+                        "message": "Strategy signal applied to portfolio.",
+                    },
+                }
+            ],
+        },
+    )
+
+    response = client.post("/api/v1/jobs/run/automation")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["skipped"] is False
+    assert payload["processed_users"] == 1
+    assert payload["applied_users"] == 1
+    assert payload["failed_users"] == []
+    assert payload["execution_details"][0]["code"] == "2330"
+
+
 def test_sync_history_batch_job(client):
     client.app.dependency_overrides[get_twstock_client] = FakeTwStockClient
 

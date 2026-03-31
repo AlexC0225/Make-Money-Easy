@@ -2,6 +2,7 @@ import { request } from './client'
 import type {
   AutomationConfig,
   AutomationConfigUpdatePayload,
+  AutomationRunResult,
   BacktestResult,
   BacktestRunPayload,
   HistoricalRange,
@@ -70,6 +71,10 @@ export const api = {
     request<AutomationConfig>(`/strategies/automation/${userId}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }),
+  runAutomationNow: () =>
+    request<AutomationRunResult>('/jobs/run/automation', {
+      method: 'POST',
     }),
   runStrategy: (payload: StrategyRunPayload) =>
     request<StrategySignal>('/strategies/run', {

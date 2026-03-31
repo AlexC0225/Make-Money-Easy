@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, get_twstock_client
 from app.schemas.job import (
+    AutomationRunResponse,
     HistoryRangeSyncRequest,
     HistoryRangeSyncResponse,
     HistorySyncRequest,
@@ -14,6 +15,7 @@ from app.schemas.job import (
     SyncProgressResponse,
     SyncTargetPreviewResponse,
 )
+from app.jobs.run_automation import run_daily_workspace_automation_job
 from app.services.sync_progress_service import SyncProgressService
 from app.services.market_data_service import MarketDataService, MarketDataServiceError
 from app.services.twstock_client import TwStockClient, TwStockClientError
@@ -51,6 +53,12 @@ def _serialize_tradable_pool_items(selection) -> list[dict[str, str | None]]:
         }
         for item in selection.tradable_pool_items
     ]
+
+
+@router.post("/run/automation", response_model=AutomationRunResponse)
+def run_workspace_automation() -> AutomationRunResponse:
+    result = run_daily_workspace_automation_job()
+    return AutomationRunResponse(**result)
 
 
 @router.post("/sync/stocks", response_model=StockUniverseSyncResponse)

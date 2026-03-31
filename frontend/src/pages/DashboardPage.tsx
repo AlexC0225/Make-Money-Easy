@@ -217,6 +217,14 @@ export function DashboardPage() {
     },
   })
 
+  const runAutomationNowMutation = useMutation({
+    mutationFn: api.runAutomationNow,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['portfolio-summary', activeUserId] })
+      await queryClient.invalidateQueries({ queryKey: ['positions', activeUserId] })
+    },
+  })
+
   const quoteQuery = useQuery({
     queryKey: ['quote', activeSymbol],
     queryFn: () => api.getQuote(activeSymbol!, { forceRefresh: true }),
@@ -276,6 +284,11 @@ export function DashboardPage() {
     positionSizingMode === 'cash_percent'
       ? `每次投入可用現金 ${cashAllocationPct}%`
       : `每次買進 ${buyQuantity.toLocaleString('zh-TW')} 股`
+  const manualExecutionSummary = runAutomationNowMutation.data
+    ? runAutomationNowMutation.data.skipped
+      ? `這次手動執行已略過：${runAutomationNowMutation.data.reason ?? '無可執行項目'}。`
+      : `這次手動執行已處理 ${runAutomationNowMutation.data.processed_users} 位使用者，套用 ${runAutomationNowMutation.data.applied_users} 位，產生 ${runAutomationNowMutation.data.execution_details.length} 筆執行明細。`
+    : null
 
   return (
     <div className="page-grid">
@@ -516,6 +529,14 @@ export function DashboardPage() {
               >
                 {automationConfigQuery.data?.enabled ? '暫停自動化' : '啟用自動化'}
               </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => runAutomationNowMutation.mutate()}
+                disabled={!automationConfigQuery.data || updateAutomationConfigMutation.isPending || runAutomationNowMutation.isPending}
+              >
+                {runAutomationNowMutation.isPending ? '手動執行中...' : '手動執行計畫'}
+              </button>
               <Link to="/backtests" className="ghost-button">
                 前往策略計畫
               </Link>
@@ -523,6 +544,8 @@ export function DashboardPage() {
 
             {automationConfigQuery.error ? <p className="error-text">{automationConfigQuery.error.message}</p> : null}
             {updateAutomationConfigMutation.error ? <p className="error-text">{updateAutomationConfigMutation.error.message}</p> : null}
+            {runAutomationNowMutation.error ? <p className="error-text">{runAutomationNowMutation.error.message}</p> : null}
+            {manualExecutionSummary ? <p className="success-text">{manualExecutionSummary}</p> : null}
           </div>
         </Panel>
       </div>

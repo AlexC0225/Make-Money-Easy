@@ -205,6 +205,26 @@ export type AutomationConfigUpdatePayload = {
   max_open_positions: number
 }
 
+export type AutomationRunResult = {
+  skipped: boolean
+  reason?: string | null
+  processed_users: number
+  applied_users: number
+  failed_users: number[]
+  execution_details: Array<{
+    user_id?: number
+    code?: string | null
+    strategy_name?: string
+    execution?: {
+      applied: boolean
+      action: string
+      quantity: number
+      status: string
+      message: string
+    }
+  }>
+}
+
 export type BacktestResult = {
   id: number
   strategy_name: string
